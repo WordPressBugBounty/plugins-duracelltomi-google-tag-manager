@@ -322,6 +322,7 @@ final class WooCommerceModule extends AbstractModule {
 			$this->enqueue_blocks_tracker( $block_context, $in_footer );
 		} else {
 			$this->enqueue_script( 'gtm4wp-woocommerce', 'gtm4wp-woocommerce.js', array( 'jquery' ), $in_footer, '' );
+			$this->inline_store_api_cart_url( 'gtm4wp-woocommerce' );
 
 			// A block-based store usually renders the Mini-Cart block in its header on
 			// every page. Removing an item (or changing its quantity) in the Mini-Cart
@@ -467,10 +468,34 @@ final class WooCommerceModule extends AbstractModule {
 			$in_footer
 		);
 
+		$inline = 'window.gtm4wp_blocks_context = ' . ScriptTag::json_literal(
+			$context,
+			JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS
+		) . ';';
+
+		wp_add_inline_script( 'gtm4wp-woocommerce-blocks', $inline, 'before' );
+		$this->inline_store_api_cart_url( 'gtm4wp-woocommerce-blocks' );
+	}
+
+	/**
+	 * Tells a tracker where the Store API cart lives.
+	 *
+	 * Both trackers read the cart back from there on a store built on the
+	 * Interactivity API: the block tracker because such a store registers no
+	 * wc/store/cart data store, and the classic tracker to resolve the variation
+	 * a product page just added, since the interactive form publishes no
+	 * variation data of its own. The address is built here rather than in the
+	 * browser because a site can move the REST root, and a guessed one would
+	 * simply 404 in silence.
+	 *
+	 * @param string $handle The script handle to attach it to.
+	 * @return void
+	 */
+	private function inline_store_api_cart_url( string $handle ): void {
 		wp_add_inline_script(
-			'gtm4wp-woocommerce-blocks',
-			'window.gtm4wp_blocks_context = ' . ScriptTag::json_literal(
-				$context,
+			$handle,
+			'window.gtm4wp_store_api_cart_url = ' . ScriptTag::json_literal(
+				rest_url( 'wc/store/v1/cart' ),
 				JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS
 			) . ';',
 			'before'
@@ -520,13 +545,23 @@ final class WooCommerceModule extends AbstractModule {
 	 * store, but WooCommerce registers that store on the Cart page too, which made
 	 * add_shipping_info / add_payment_info fire there with no interaction (#463).
 	 *
+	 * The order-received page is decided before either arm rather than inside the
+	 * checkout arm alone: WooCommerce answers is_checkout() true there, and on a
+	 * store where is_cart() is true while the checkout renders (see
+	 * PageDataLayer::add_datalayer_data() for how that happens) it is true on the
+	 * thank-you page as well. Excluding the page from the checkout arm only let it
+	 * fall through to the cart arm on such a store, so the thank-you page loaded
+	 * the block tracker in its cart context in place of the classic tracker. The
+	 * server side resolves the order-received page ahead of both; so does this.
+	 *
 	 * @return string
 	 */
 	private function block_cart_or_checkout_context(): string {
-		if (
-			function_exists( 'is_checkout' ) && is_checkout()
-			&& ! ( function_exists( 'is_order_received_page' ) && is_order_received_page() )
-		) {
+		if ( function_exists( 'is_order_received_page' ) && is_order_received_page() ) {
+			return '';
+		}
+
+		if ( function_exists( 'is_checkout' ) && is_checkout() ) {
 			return $this->page_uses_block( 'woocommerce/checkout' ) ? 'checkout' : '';
 		}
 
