@@ -171,7 +171,10 @@ final class Helpers {
 	 * The cookie is deliberately NOT HttpOnly (the client must read it) and carries
 	 * no visitor value — only the fact that a fetch is due. The client clears it
 	 * after delivery; the 2-day expiry only bounds the case where delivery never
-	 * happened, and comfortably covers a WooCommerce session.
+	 * happened, and comfortably covers a WooCommerce session. Host-only on
+	 * purpose (no Domain attribute, unlike the login-gate cookie): the JS clearer
+	 * writes no Domain either, and a cookie set with one is a different cookie
+	 * the clear would never remove (#270, RI-14).
 	 *
 	 * @param bool $cache_safe_enabled Whether GTM4WP_OPTION_CACHE_SAFE_DATALAYER is on.
 	 * @return void
@@ -187,7 +190,6 @@ final class Helpers {
 			array(
 				'expires'  => time() + ( 2 * DAY_IN_SECONDS ),
 				'path'     => '/',
-				'domain'   => defined( 'COOKIE_DOMAIN' ) ? COOKIE_DOMAIN : '',
 				'secure'   => is_ssl(),
 				'httponly' => false,
 				'samesite' => 'Lax',
@@ -281,6 +283,12 @@ final class Helpers {
 	 * by the line quantity. Used to add GA4's per-item `discount` field where a
 	 * coupon or sale reduced the line (#348).
 	 *
+	 * The tax keys WooCommerce writes onto a cart item are asymmetric:
+	 * `line_subtotal_tax` next to `line_subtotal`, but `line_tax` (not
+	 * `line_total_tax`) next to `line_total` - see WC_Cart_Totals::set_items_tax().
+	 * Reading a key that does not exist silently adds no tax to that side, which
+	 * turned the whole line tax into a phantom discount on tax-inclusive stores (#470).
+	 *
 	 * Returns null when the totals are not available or when there is no discount
 	 * (≤ 0), so the caller can simply omit the field on undiscounted lines rather
 	 * than emit a 0.
@@ -303,7 +311,7 @@ final class Helpers {
 		$total    = (float) $cart_item_data['line_total'];
 		if ( $include_tax ) {
 			$subtotal += (float) ( $cart_item_data['line_subtotal_tax'] ?? 0 );
-			$total    += (float) ( $cart_item_data['line_total_tax'] ?? 0 );
+			$total    += (float) ( $cart_item_data['line_tax'] ?? 0 );
 		}
 
 		$discount = round( ( $subtotal - $total ) / $quantity, 2 );

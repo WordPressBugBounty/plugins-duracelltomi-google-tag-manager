@@ -33,6 +33,16 @@ final class ConsentDefaults {
 	public const FILTER_DEFAULT_ENABLED = 'gtm4wp_consent_mode_default_enabled';
 
 	/**
+	 * The fixed opening of the consent default command, also handed to WP
+	 * Rocket as an exclusion pattern (#325, RI-34): the block's only other
+	 * reference to the array is the configured name, which a list of literals
+	 * cannot follow.
+	 *
+	 * @since 2.0.3
+	 */
+	public const CONSENT_DEFAULT_COMMAND = 'gtag("consent", "default"';
+
+	/**
 	 * Constructor.
 	 *
 	 * @param Options $options The plugin options service.
@@ -107,19 +117,23 @@ final class ConsentDefaults {
 
 	/**
 	 * Returns the consent mode default script block. Byte-identical to the
-	 * block output by gtm4wp_wp_header_begin() in 1.x.
+	 * block output by gtm4wp_wp_header_begin() in 1.x for the default data
+	 * layer name; the gtag shim pushes to the CONFIGURED array, which is the
+	 * one the container reads (`&l=`). 1.x hardcoded `dataLayer` here, so a
+	 * renamed data layer silently lost its consent defaults (RI-14, #269).
 	 *
-	 * @param ScriptTag $script_tag The script tag helper.
+	 * @param ScriptTag $script_tag     The script tag helper.
+	 * @param string    $datalayer_name Validated data layer variable name (DataLayer::name()).
 	 * @return string
 	 */
-	public function script_block( ScriptTag $script_tag ): string {
+	public function script_block( ScriptTag $script_tag, string $datalayer_name ): string {
 		return '
 ' . $script_tag->opening_tag() . '
 		if (typeof gtag == "undefined") {
-			function gtag(){dataLayer.push(arguments);}
+			function gtag(){' . $datalayer_name . '.push(arguments);}
 		}
 
-		gtag("consent", "default", {
+		' . self::CONSENT_DEFAULT_COMMAND . ', {
 			"analytics_storage": "' . $this->flag( GTM4WP_OPTION_INTEGRATE_CONSENTMODE_ANALYTICS ) . '",
 			"ad_storage": "' . $this->flag( GTM4WP_OPTION_INTEGRATE_CONSENTMODE_ADS ) . '",
 			"ad_user_data": "' . $this->flag( GTM4WP_OPTION_INTEGRATE_CONSENTMODE_AD_USER_DATA ) . '",
