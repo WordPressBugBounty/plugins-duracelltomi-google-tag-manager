@@ -5,7 +5,7 @@ Tags: google tag manager, tag manager, gtm, google ads, google analytics
 Requires at least: 6.3
 Requires PHP: 8.0
 Tested up to: 7.1
-Stable tag: 2.0.3
+Stable tag: 2.0.4
 License: GPLv3
 License URI: http://www.gnu.org/licenses/gpl.html
 
@@ -256,6 +256,10 @@ file. (1.x combined its own scripts; 2.0 delegates this.)
 5. Advanced settings
 
 == Changelog ==
+
+= 2.0.4 =
+
+* Fixed: on the classic WooCommerce checkout, an error in the plugin's checkout step tracking could stop the order from being submitted the normal way, so a gateway that adds card details in the browser, such as Stripe, rejected it. Tracking errors can no longer interrupt the checkout or a variation selection, and still show in the browser console. (#472)
 
 = 2.0.3 =
 
