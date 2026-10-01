@@ -46,9 +46,11 @@ final class ContainerCode {
 	public const FILTER_AMP_RUNNING = 'gtm4wp_amp_running';
 
 	/**
-	 * The Google tag developer ID Google issued to GTM4WP. Pushed as
-	 * `gtag('set', 'developer_id.<id>', true)` before the container loads so
-	 * Google can tell which platform installed the tag (U165).
+	 * The Google tag developer ID Google issued to GTM4WP. Pushed as the
+	 * arguments object of `gtag('set', 'developer_id.<id>', true)` before the
+	 * container loads so Google can tell which platform installed the tag (U165).
+	 * The block never names `gtag`: keyword-matching JS delay tools (Flying
+	 * Scripts) would delay the block that declares the data layer.
 	 *
 	 * @since 2.0.3
 	 */
@@ -148,7 +150,7 @@ final class ContainerCode {
 ' . $this->script_tag->opening_tag() . '
 	var gtm4wp_datalayer_name = ' . ScriptTag::json_literal( $datalayer_name, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS ) . ';
 	var ' . $datalayer_name . ' = ' . $datalayer_name . ' || [];
-	(function(){function gtag(){' . $datalayer_name . '.push(arguments);}gtag(\'set\', \'developer_id.' . self::DEVELOPER_ID . '\', true);})();';
+	(function(){' . $datalayer_name . '.push(arguments);})(\'set\', \'developer_id.' . self::DEVELOPER_ID . '\', true);';
 
 		// Load in the global variables from the gtm4wp_add_global_vars_array / GTM4WP_WPFILTER_ADDGLOBALVARS_ARRAY filter.
 		$added_global_js_vars = (array) apply_filters( GTM4WP_WPFILTER_ADDGLOBALVARS_ARRAY, array() );
@@ -343,8 +345,7 @@ final class ContainerCode {
 	private function datalayer_block( array $containers, string $datalayer_name ): string {
 		$script_tag = '
 <!-- Google Tag Manager for WordPress by gtm4wp.com -->
-<!-- GTM Container placement set to ' . esc_html( $this->placement_string() ) . ' -->
-' . $this->script_tag->opening_tag();
+<!-- GTM Container placement set to ' . esc_html( $this->placement_string() ) . ' -->';
 
 		if ( array() !== $containers ) {
 			$gtm4wp_datalayer_data = $this->datalayer->compile();
@@ -361,9 +362,12 @@ final class ContainerCode {
 			// really are numbers (prices, totals, counts) are typed at their source
 			// instead - the same contract the additional-push and cart-fragments
 			// sinks have always had, so all sinks now agree on types.
-			$datalayer_json = wp_json_encode( $gtm4wp_datalayer_data, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS );
+			// json_object() keeps the top level an object literal: an empty or
+			// list array would encode as `[...]`, which GTM reads as a command
+			// array, not a message. Nested arrays are untouched.
+			$datalayer_json = wp_json_encode( ScriptTag::json_object( $gtm4wp_datalayer_data ), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS );
 
-			// Omit BOTH lines rather than emit a literal we do not have (#141).
+			// Omit the whole block rather than emit a literal we do not have (#141).
 			// wp_json_encode() returns false for a value it cannot encode - INF/NAN,
 			// a resource, or nesting past its depth limit, all of which reach the
 			// data layer only through the public compile filter - and PHP renders
@@ -372,18 +376,22 @@ final class ContainerCode {
 			// the data layer initialization in it, and every container loader after
 			// it. Dropping the push instead costs one page's data layer content and
 			// leaves the container loading. See ScriptTag::json_literal() for the
-			// assignment-position half of this rule.
+			// assignment-position half of this rule. Empty content keeps the variable
+			// for custom code reading it, but is not pushed.
 			if ( false !== $datalayer_json ) {
 				$script_tag .= '
+' . $this->script_tag->opening_tag() . '
 	var dataLayer_content = ' . $datalayer_json . ';';
 
-				$script_tag .= '
+				if ( array() !== $gtm4wp_datalayer_data ) {
+					$script_tag .= '
 	' . esc_js( $datalayer_name ) . '.push( dataLayer_content );';
+				}
+
+				$script_tag .= '
+</script>';
 			}
 		}
-
-		$script_tag .= '
-</script>';
 
 		return $script_tag;
 	}
