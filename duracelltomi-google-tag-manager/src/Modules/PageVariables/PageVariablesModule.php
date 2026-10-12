@@ -182,7 +182,10 @@ final class PageVariablesModule extends AbstractModule {
 		}
 
 		if ( $this->opt( GTM4WP_OPTION_INCLUDE_POSTTITLE ) ) {
-			$data_layer['pageTitle'] = wp_strip_all_tags( wp_title( '|', false, 'right' ) );
+			// As the visitor reads it: the wp_title() filter chain texturizes and
+			// entity-encodes ("Tom&#8217;s"), so decode and let the JSON sink
+			// escape the text once (#273).
+			$data_layer['pageTitle'] = html_entity_decode( wp_strip_all_tags( wp_title( '|', false, 'right' ) ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 		}
 
 		if ( $this->opt( GTM4WP_OPTION_INCLUDE_PAGELANGUAGE ) ) {
@@ -374,7 +377,8 @@ final class PageVariablesModule extends AbstractModule {
 			// pagePostTerms.meta); Migration seeds the meta option from the legacy
 			// one, so an upgrading site keeps sending exactly what it sent before.
 			$include_post_terms = (bool) $this->opt( GTM4WP_OPTION_INCLUDE_POSTTERMLIST );
-			$include_post_meta  = (bool) $this->opt( GTM4WP_OPTION_INCLUDE_POSTMETA );
+			// Custom fields of a password-protected post stay behind the password (#400).
+			$include_post_meta = (bool) $this->opt( GTM4WP_OPTION_INCLUDE_POSTMETA ) && ! ( null !== $post && post_password_required( $post ) );
 
 			if ( ( $include_post_terms || $include_post_meta ) && null !== $post ) {
 				$data_layer['pagePostTerms'] = array();
@@ -495,7 +499,8 @@ final class PageVariablesModule extends AbstractModule {
 				}
 			}
 
-			if ( ( $this->opt( GTM4WP_OPTION_INCLUDE_CONTENTWORDCOUNT ) || $this->opt( GTM4WP_OPTION_INCLUDE_READINGTIME ) ) && null !== $post ) {
+			// Not measured from the content of a password-protected post (#400).
+			if ( ( $this->opt( GTM4WP_OPTION_INCLUDE_CONTENTWORDCOUNT ) || $this->opt( GTM4WP_OPTION_INCLUDE_READINGTIME ) ) && null !== $post && ! post_password_required( $post ) ) {
 				$post_content = (string) get_post_field( 'post_content', get_the_ID() );
 				$word_count   = self::count_words( wp_strip_all_tags( strip_shortcodes( $post_content ) ) );
 
@@ -707,7 +712,10 @@ final class PageVariablesModule extends AbstractModule {
 				// also removes their server-side reflected-XSS surface.
 				// siteSearchResults stays server-side: only the server knows it.
 				if ( ! $cache_safe ) {
-					$data_layer['siteSearchTerm'] = get_search_query();
+					// The RAW term (#274): the hex-flag JSON sink escapes it, and the
+					// cache-safe client tier sends the raw ?s= value, so both tiers
+					// report one string. get_search_query() would esc_attr() it.
+					$data_layer['siteSearchTerm'] = get_search_query( false );
 					$data_layer['siteSearchFrom'] = '';
 					if ( ! empty( $_SERVER['HTTP_REFERER'] ) ) {
 						$referer_url_parts            = explode( '?', esc_url_raw( wp_unslash( $_SERVER['HTTP_REFERER'] ) ) );

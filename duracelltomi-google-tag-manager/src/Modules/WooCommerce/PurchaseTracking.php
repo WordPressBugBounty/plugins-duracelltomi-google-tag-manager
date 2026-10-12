@@ -51,10 +51,9 @@ final class PurchaseTracking {
 	 * checkout/thankyou.php with a real order ONLY after its known-shopper and
 	 * guest-email gates pass - each declining branch renders
 	 * checkout/order-received.php and returns - and that template fires
-	 * woocommerce_thankyou inside its own `if ( $order )`. Reaching this hook is
-	 * therefore the evidence the page rendered. That holds for the stock template;
-	 * a theme overriding thankyou.php owns its own decision, as it does for every
-	 * other hook it chooses to fire.
+	 * woocommerce_thankyou inside its own `if ( $order )`. That is WooCommerce's
+	 * gate; a theme, page builder or funnel that fires this hook owns its own. A
+	 * printed purchase keeps the page out of page caches (#460).
 	 *
 	 * @param int $order_id The ID of the order placed by the user just recently.
 	 * @return void
@@ -75,6 +74,11 @@ final class PurchaseTracking {
 
 		if ( $order_id > 0 ) {
 			$order = wc_get_order( $order_id );
+
+			// false, or a refund, for an id that is not an order (#420).
+			if ( ! $order instanceof \WC_Order ) {
+				unset( $order );
+			}
 		}
 
 		$data_layer = array();
@@ -116,6 +120,9 @@ final class PurchaseTracking {
 			);
 
 			$datalayer_name = $this->datalayer->name();
+			$clear_js       = (bool) $this->options->get( GTM4WP_OPTION_INTEGRATE_WCCLEARECOMMERCEDL )
+				? \GTM4WP\Modules\WooCommerce\Helpers::clear_ecommerce_js( $datalayer_name )
+				: '';
 
 			// An unencodable payload must not be reported as tracked (#141). Order
 			// data passes through the public GTM4WP_WPFILTER_EEC_ORDER_DATA /
@@ -134,9 +141,16 @@ final class PurchaseTracking {
 
 			$script_tag = '
 ' . $this->script_tag->opening_tag() . '
-	window.' . esc_js( $datalayer_name ) . ' = window.' . esc_js( $datalayer_name ) . ' || [];
+	window.' . esc_js( $datalayer_name ) . ' = window.' . esc_js( $datalayer_name ) . ' || [];' . $clear_js . '
 	window.' . esc_js( $datalayer_name ) . '.push(' . $encoded_data_layer . ');
 </script>';
+
+			// The buyer's order is now in this page: keep it out of page caches (#460).
+			// Constant only: headers are usually sent by now; output-buffer caches read it.
+			if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+				// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- the shared constant page-cache plugins read (U70, U141), not ours to prefix.
+				define( 'DONOTCACHEPAGE', true );
+			}
 
 			$this->script_tag->print_script_block( $script_tag );
 

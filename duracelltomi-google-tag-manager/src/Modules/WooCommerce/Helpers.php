@@ -201,6 +201,24 @@ final class Helpers {
 	}
 
 	/**
+	 * Whether this request was sent by script as an AJAX call. Checks the
+	 * X-Requested-With VALUE, not its presence: Android WebView in-app browsers
+	 * (Facebook, Instagram) send the app's package name in it on every page
+	 * load, and a presence check dropped their whole data layer (#477, U187).
+	 *
+	 * @return bool
+	 */
+	public static function is_xhr_request(): bool {
+		if ( ! isset( $_SERVER['HTTP_X_REQUESTED_WITH'] ) ) {
+			return false;
+		}
+
+		$requested_with = sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_REQUESTED_WITH'] ) );
+
+		return 0 === strcasecmp( trim( $requested_with ), 'XMLHttpRequest' );
+	}
+
+	/**
 	 * Replace only the first occurrence of the search string with the replacement string.
 	 *
 	 * Both arguments are treated as literal strings. This deliberately does NOT use
@@ -849,5 +867,17 @@ final class Helpers {
 		}
 
 		return hash( $hash_algorithm, $normalized );
+	}
+
+	/**
+	 * The "Clear ecommerce object before new event" statement for a push printed
+	 * server-side: GA4's recommended `{ecommerce: null}` before an ecommerce event,
+	 * what gtm4wp_push_ecommerce() does in the browser.
+	 *
+	 * @param string $datalayer_name The data layer variable name.
+	 * @return string The JavaScript statement.
+	 */
+	public static function clear_ecommerce_js( string $datalayer_name ): string {
+		return "\n\twindow." . esc_js( $datalayer_name ) . '.push({"ecommerce":null});';
 	}
 }

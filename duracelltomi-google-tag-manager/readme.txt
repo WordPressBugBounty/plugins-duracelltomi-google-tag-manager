@@ -5,7 +5,7 @@ Tags: google tag manager, tag manager, gtm, google ads, google analytics
 Requires at least: 6.3
 Requires PHP: 8.0
 Tested up to: 7.1
-Stable tag: 2.0.5
+Stable tag: 2.0.6
 License: GPLv3
 License URI: http://www.gnu.org/licenses/gpl.html
 
@@ -257,6 +257,27 @@ file. (1.x combined its own scripts; 2.0 delegates this.)
 
 == Changelog ==
 
+= 2.0.6 =
+
+* Fixed: visitors browsing in the in-app browser of an Android app such as Facebook or Instagram got no WooCommerce data layer, so their `purchase` and other e-commerce events were missing. Thanks to @sw33tr for the report (#477).
+* Fixed: on the classic cart page, re-adding a removed product with "Undo" now sends `add_to_cart`. WooCommerce restores it in the background and discarded the page part that carried the event.
+* Fixed: with "Clear ecommerce object before new event" on, the e-commerce events GTM4WP adds as the page loads (`view_item`, `view_cart`, `begin_checkout`, `purchase`, the cart "Undo" `add_to_cart`) and the Quick View `view_item` are now cleared before too, not only the events fired in the browser.
+* Fixed: the plugin conflict notice now calls Google Analytics for WooCommerce by its current name.
+* Fixed: WooCommerce Mini-Cart tracking (`remove_from_cart` from the Mini-Cart drawer) now loads only on pages that show the Mini-Cart block. Stores using the Cart or Checkout block no longer load the WordPress data scripts on every page, and stores with a classic cart now track removals from a Mini-Cart block too.
+* Fixed: a WooCommerce Product Bundles bundle reported `stockstatus` as `instock` in the e-commerce items even when one of its bundled products was out of stock and the bundle could not be bought; it now reports `outofstock`. Thanks to @KingWehsops for the report (#474).
+* Fixed: a `gtm4wp_overwrite_consent_mode_flag` filter callback returning the string `denied` set that consent signal to `granted`; the filter now also accepts `granted` and `denied`.
+* Fixed: a WooCommerce checkout total that is not a finite number no longer breaks the inline checkout script; `gtm4wp_checkout_value` is `null` then.
+* Fixed: hardened how the plugin's REST endpoints answer requests made from other pages.
+* Changed: `siteSearchTerm` carries the search term as typed; the classic data layer used to HTML-encode it while the cache-safe one did not. A GTM trigger matching the encoded form needs the plain text now.
+* Changed: `pageTitle` carries the title as the visitor reads it: WordPress's encoding of ampersands, quotes and dashes is decoded. A GTM trigger matching the encoded form needs the plain text now.
+* Changed: the Contact Form 7 tracker script is no longer loaded while Contact Form 7 is not installed.
+* Changed: for developers, `gtm4wp_datalayer_push()` returns `false` for a non-string `$js_before`/`$js_after` argument instead of printing `Array` into the page.
+* Fixed: thank-you pages that show the purchase are now kept out of page caches. The page set as "Custom order received page" is treated the same way WooCommerce treats its own order received page; a thank-you page built by a theme or page builder is excluded from page-cache plugins.
+* Fixed: on a password-protected post, the post meta, word count and reading time variables are left out of the data layer for visitors who have not entered the password.
+* Fixed: when the Contact Form 7 tracker's settings do not reach the page (for example an optimisation plugin drops inline scripts), it no longer falls back to sending the submitted form values.
+* Fixed: a PHP error when `woocommerce_thankyou` fired with an id that is not an order, or on a product page whose product could not be loaded.
+* Updated: tested with WooCommerce 11.2.0.
+
 = 2.0.5 =
 
 * Fixed: the data layer initialisation block no longer contains the word `gtag`. Since 2.0.3, a JavaScript delay plugin with `gtag` on its keyword list, such as Flying Scripts, delayed the whole block and the browser console showed `dataLayer is not defined`. The Google tag developer ID is still set.
@@ -300,7 +321,7 @@ file. (1.x combined its own scripts; 2.0 delegates this.)
 
 = 2.0.0 =
 
-Major rewrite of the plugin. Please read the announcement post on gtm4wp.com before upgrading. This section is a summary; wordpress.org truncates a changelog after 5,000 words, so the complete list of 2.0.0 changes with every detail lives in the changelog on GitHub: https://github.com/duracelltomi/gtm4wp/blob/master/CHANGELOG.md
+Major rewrite of the plugin. Please read the announcement post on gtm4wp.com before upgrading. This section is a summary; wordpress.org truncates a changelog after 5,000 words, so the complete list of 2.0.0 changes with every detail lives in the full changelog: https://gtm4wp.com/changelog
 
 * Changed: complete object-oriented rewrite. Every feature is a module that third-party plugins can extend. All public template functions, filter and action names, wp-config constants and the options storage key are unchanged, so existing integrations keep working.
 * Changed: minimum requirements raised to PHP 8.0 and WordPress 6.3.
@@ -348,7 +369,7 @@ A maintenance release for the 1.x line. 1.22.4 was intended to be the last one b
 
 * Fixed: yet another fix to the purchase tracking. Thanks [Khnaz35](https://github.com/Khnaz35)
 
-Older releases are listed in the full changelog on GitHub: https://github.com/duracelltomi/gtm4wp/blob/master/CHANGELOG.md
+Older releases are listed in the full changelog: https://gtm4wp.com/changelog/1-x
 
 == Upgrade Notice ==
 
