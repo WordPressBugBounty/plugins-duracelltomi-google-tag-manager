@@ -10,8 +10,10 @@
 
 namespace GTM4WP\Admin;
 
+use GTM4WP\Capability;
 use GTM4WP\Frontend\ScriptTag;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\PanelSchemaInterface;
 use GTM4WP\Module\Registry;
 
 defined( 'ABSPATH' ) || exit;
@@ -23,59 +25,70 @@ defined( 'ABSPATH' ) || exit;
 final class SettingsPage {
 
 	/**
-	 * Query argument carrying the option key a deep link points at.
-	 *
-	 * Defined once here and handed to the React app in the bootstrap data
-	 * (`focusArg`) rather than written a second time in JavaScript: a contract
-	 * spelled out at both ends of our own codebase diverges long before anything
-	 * upstream moves (UC-6).
+	 * Query argument carrying the option key a deep link points at; handed to
+	 * the React app as `focusArg` rather than written a second time (UC-6).
 	 */
 	public const FOCUS_QUERY_ARG = 'gtm4wp-focus';
 
 	/**
-	 * Class of the static boot-failure notice printed inside the app container.
-	 *
-	 * Written into the markup by render() and into the reveal CSS by
-	 * enqueue_assets(); defined once so the two ends cannot drift apart (UC-6).
+	 * Class of the static boot-failure notice; used by render() and by the
+	 * reveal CSS in enqueue_assets() (UC-6).
 	 */
 	public const BOOT_FALLBACK_CLASS = 'gtm4wp-admin-app-fallback';
 
 	/**
-	 * Seconds before the boot-failure notice becomes visible.
-	 *
-	 * Long enough for build/admin.js to load and boot on a slow connection
-	 * (which removes the notice before it is ever seen), short enough that an
-	 * admin staring at a blank screen gets an answer.
+	 * Seconds before the boot-failure notice becomes visible: long enough for
+	 * admin.js to boot on a slow connection, short enough to answer a blank screen.
 	 */
 	public const BOOT_FALLBACK_REVEAL_DELAY = 3;
 
 	/**
+	 * Screen ID WordPress assigned the page in add_admin_page(); '' until then.
+	 * Not always settings_page_*: a user with a filtered capability but without
+	 * manage_options gets admin_page_*, since Settings itself is closed to them.
+	 *
+	 * @var string
+	 */
+	private string $hook_suffix = '';
+
+	/**
+	 * Class of the notice shown when the screen's settings could not be encoded.
+	 */
+	public const BOOTSTRAP_ERROR_CLASS = 'gtm4wp-admin-app-bootstrap-error';
+
+	/**
+	 * The json_last_error_msg() of a bootstrap that could not be encoded; '' when
+	 * it could. Set in enqueue_assets(), which core runs before render().
+	 *
+	 * @var string
+	 */
+	private string $bootstrap_error = '';
+
+	/**
 	 * Constructor.
 	 *
-	 * @param Registry       $registry The module registry.
-	 * @param RestController $rest     The settings REST controller (for current values).
+	 * @param Registry      $registry The module registry.
+	 * @param SettingsStore $store    The settings service the screen reads its values from.
 	 */
-	public function __construct( private Registry $registry, private RestController $rest ) {
+	public function __construct( private Registry $registry, private SettingsStore $store ) {
 	}
 
 	/**
-	 * URL of the plugin settings page, optionally deep linking to a single option.
-	 *
-	 * With a `$field_key` the URL carries `gtm4wp-focus=<option key>`, which the
-	 * settings app resolves against its own bootstrap data: it selects the module
-	 * and the group tab that hold the option and highlights the control. The
-	 * address is the option key alone and never a module/tab path, so the link
-	 * keeps working when a field is regrouped or moves to another module, and the
-	 * caller never has to know where the option currently lives.
-	 *
-	 * A key that matches nothing (a removed option, a hand-edited URL) simply
-	 * opens the page the way it did before.
+	 * URL of the settings page, optionally deep linking to one option via
+	 * `gtm4wp-focus=<option key>`, which the app resolves against its bootstrap
+	 * data. The address is the option key alone, never a module/tab path, so
+	 * the link survives a field being regrouped; an unknown key opens the page.
 	 *
 	 * @param string $field_key Option key to focus - a GTM4WP_OPTION_* value - or '' for the page itself.
 	 * @return string URL for use in an href; escape it at the point of output.
 	 */
 	public static function url( string $field_key = '' ): string {
-		$url = menu_page_url( GTM4WP_ADMINSLUG, false );
+		// menu_page_url() answers only once admin_menu has registered the page.
+		// Its file may be loaded on a REST request too (ConfigurationChecks
+		// requires it), where the function exists and returns '' (#282).
+		$url = function_exists( 'menu_page_url' ) && did_action( 'admin_menu' )
+			? menu_page_url( GTM4WP_ADMINSLUG, false )
+			: admin_url( 'options-general.php?page=' . GTM4WP_ADMINSLUG );
 
 		if ( '' === $field_key ) {
 			return $url;
@@ -102,10 +115,9 @@ final class SettingsPage {
 	 * @return void
 	 */
 	public function add_admin_page(): void {
-		/** This filter is documented in src/Plugin.php */
-		$capability = apply_filters( 'gtm4wp_admin_page_capability', 'manage_options' );
+		$capability = Capability::settings();
 
-		add_options_page(
+		$this->hook_suffix = (string) add_options_page(
 			esc_html__( 'Google Tag Manager for WordPress settings', 'duracelltomi-google-tag-manager' ),
 			esc_html__( 'Google Tag Manager', 'duracelltomi-google-tag-manager' ),
 			$capability,
@@ -115,17 +127,11 @@ final class SettingsPage {
 	}
 
 	/**
-	 * Renders the React app container, with a static boot-failure notice inside.
-	 *
-	 * The screen is drawn by build/admin.js, and the EasyPrivacy filter list
-	 * blocks everything under the plugin folder, so an admin running a content
-	 * blocker gets no script and, before this notice existed, a silently blank
-	 * page. The notice is plain server-rendered HTML that no blocker can touch:
-	 * React clears the container's children on the app's first render (U117),
-	 * so it is only ever seen when the app did not boot - the script blocked,
-	 * missing, failed, or JavaScript off entirely. The reveal CSS added in
-	 * enqueue_assets() keeps it invisible for the first few seconds so it does
-	 * not flash while the app loads normally.
+	 * Renders the React app container with a static boot-failure notice
+	 * inside, for the admin whose content blocker stops build/admin.js. React
+	 * clears the container on first render (U117), so the notice is only seen
+	 * when the app did not boot; the reveal CSS keeps it invisible for the
+	 * first seconds so it does not flash.
 	 *
 	 * @return void
 	 */
@@ -133,6 +139,20 @@ final class SettingsPage {
 		echo '<div class="wrap">';
 		echo '<h1 class="screen-reader-text">' . esc_html__( 'Google Tag Manager for WordPress options', 'duracelltomi-google-tag-manager' ) . '</h1>';
 		echo '<div id="gtm4wp-admin-app">';
+
+		// The app cannot start without its settings, and the cause is known:
+		// say so at once instead of blaming a blocker (#663).
+		if ( '' !== $this->bootstrap_error ) {
+			echo '<div class="' . esc_attr( self::BOOTSTRAP_ERROR_CLASS ) . ' notice notice-error inline"><p>';
+			printf(
+				/* translators: %s: the PHP JSON encoder's error message, in English. */
+				esc_html__( 'The GTM4WP settings could not be prepared for this screen: a stored option, or a module added by another plugin, holds a value that cannot be sent to the browser (%s).', 'duracelltomi-google-tag-manager' ),
+				esc_html( $this->bootstrap_error )
+			);
+			echo '</p></div></div></div>';
+			return;
+		}
+
 		echo '<div class="' . esc_attr( self::BOOT_FALLBACK_CLASS ) . ' notice notice-warning inline">';
 		echo '<p><strong>' . esc_html__( 'The GTM4WP settings screen could not start.', 'duracelltomi-google-tag-manager' ) . '</strong></p>';
 		echo '<p>' . esc_html__( 'This screen is built in the browser by a JavaScript file loaded from the plugin folder (build/admin.js), and that file did not run. The most likely cause is an ad or privacy blocker: some filter lists block everything under the folder of this plugin, and that also blocks the file this screen is built from.', 'duracelltomi-google-tag-manager' ) . '</p>';
@@ -149,7 +169,7 @@ final class SettingsPage {
 	 * @return void
 	 */
 	public function enqueue_assets( $hook ): void {
-		if ( 'settings_page_' . GTM4WP_ADMINSLUG !== $hook ) {
+		if ( '' === $this->hook_suffix || $this->hook_suffix !== $hook ) {
 			return;
 		}
 
@@ -173,12 +193,9 @@ final class SettingsPage {
 
 		wp_enqueue_style( 'wp-components' );
 
-		// Reveal CSS for the boot-failure notice printed by render(). Attached to
-		// the core wp-components handle, never to the plugin's own stylesheet:
-		// the notice exists for the case where everything under the plugin folder
-		// is blocked, so its styling must not load from there. A zero-duration
-		// delayed animation flips the visibility with no JavaScript involved,
-		// which keeps the notice working when scripts are blocked or off.
+		// Reveal CSS for the boot-failure notice, attached to the core
+		// wp-components handle (the plugin folder may be blocked); a delayed
+		// zero-duration animation flips visibility with no JavaScript.
 		wp_add_inline_style(
 			'wp-components',
 			'#gtm4wp-admin-app .' . self::BOOT_FALLBACK_CLASS . '{visibility:hidden;animation:gtm4wp-admin-app-fallback-reveal 0s ' . self::BOOT_FALLBACK_REVEAL_DELAY . 's forwards}'
@@ -196,9 +213,16 @@ final class SettingsPage {
 			wp_style_add_data( 'gtm4wp-admin-app', 'rtl', 'replace' );
 		}
 
+		// bootstrap_data() is always an array, so 'null' means it failed to encode
+		// (INF/NAN from an out-of-band write or a third-party module, #663).
+		$bootstrap = ScriptTag::json_literal( $this->bootstrap_data(), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS );
+		if ( 'null' === $bootstrap ) {
+			$this->bootstrap_error = json_last_error_msg();
+		}
+
 		wp_add_inline_script(
 			'gtm4wp-admin-app',
-			'var gtm4wpSettings = ' . ScriptTag::json_literal( $this->bootstrap_data(), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS ) . ';',
+			'var gtm4wpSettings = ' . $bootstrap . ';',
 			'before'
 		);
 	}
@@ -211,10 +235,9 @@ final class SettingsPage {
 	 * @return array<string, mixed>
 	 */
 	public function bootstrap_data(): array {
-		// ui_values(), not current_values(): where a wp-config.php constant
-		// overrides the container setup the screen shows what is actually
-		// loaded, alongside the read-only state the container schema declares.
-		$values  = $this->rest->ui_values();
+		// ui_values(), not current_values(): the screen shows what a wp-config
+		// constant actually loads.
+		$values  = $this->store->ui_values();
 		$modules = array();
 
 		foreach ( $this->registry->all() as $module ) {
@@ -225,14 +248,30 @@ final class SettingsPage {
 
 			$schema = new $schema_class();
 
+			$panel_data = $schema instanceof PanelSchemaInterface ? $schema->panel_data() : array();
+
+			// The two reserved panel_data keys (see PanelSchemaInterface): column
+			// choices that only exist at render time, since fields() must stay
+			// database-free, and the accordion group the panel renders inside.
+			$column_choices = is_array( $panel_data['columnChoices'] ?? null ) ? $panel_data['columnChoices'] : array();
+
+			$panel_group = is_string( $panel_data['panelGroup'] ?? null ) ? $panel_data['panelGroup'] : '';
+
 			$fields = array();
 			foreach ( $schema->fields() as $field ) {
 				$ui = $field->to_ui_array( $values[ $field->key ] ?? $field->default_value );
 
-				// Resolved here rather than inside to_ui_array() so that Field, which
-				// belongs to the options layer, never learns the documentation domain.
-				// The anchor is the option key itself - see the Docs class docblock.
+				// Resolved here so Field never learns the documentation domain.
 				$ui['doc'] = Docs::url( $field->doc, $field->key );
+
+				if ( isset( $column_choices[ $field->key ] ) && is_array( $column_choices[ $field->key ] ) ) {
+					foreach ( $ui['columns'] as $index => $column ) {
+						$key = $column['key'] ?? '';
+						if ( isset( $column_choices[ $field->key ][ $key ] ) ) {
+							$ui['columns'][ $index ]['choices'] = (array) $column_choices[ $field->key ][ $key ];
+						}
+					}
+				}
 
 				$fields[] = $ui;
 			}
@@ -258,6 +297,11 @@ final class SettingsPage {
 				'docUrl'             => $schema instanceof DocumentedSchemaInterface
 					? Docs::url( $schema->doc_url() )
 					: '',
+				// A custom React panel with its own REST routes (the service
+				// accounts manager). Same instanceof opt-in as the doc link.
+				'panel'              => $schema instanceof PanelSchemaInterface ? $schema->panel() : '',
+				'panelGroup'         => $panel_group,
+				'panelData'          => (object) $panel_data,
 			);
 		}
 

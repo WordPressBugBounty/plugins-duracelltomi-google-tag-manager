@@ -15,23 +15,23 @@ use GTM4WP\Modules\Container\ContainerRows;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Cleans up stored options of features removed in 2.0 and seeds the
- * per-container row option from the flat 1.x container options. Runs at
- * most once per plugin version, only in the admin, and never touches
- * options of features that still exist - a downgrade to 1.x therefore
- * stays possible except for the removed features themselves.
+ * Cleans up stored options of features removed since 1.x and seeds the
+ * per-container row and post meta options, only in the admin. Seeding runs
+ * on every admin request and writes only what is missing; the cleanup runs
+ * once per plugin version. Options of features that still exist are kept,
+ * except retired values inside them (the "ua" blacklist entry), so a
+ * downgrade stays possible except for the removed features themselves.
  */
 final class Migration {
 
-	private const VERSION_OPTION = 'gtm4wp-plugin-version';
+	public const VERSION_OPTION = 'gtm4wp-plugin-version';
 
 	/**
-	 * Option keys of features removed in 2.0:
-	 * weather + geo data, WP e-Commerce integration, scroll tracking and the
-	 * non-functional 1.x blacklist-sandboxed flag (2.0 restricts sandboxed
-	 * template scripts through the `sandboxedScripts` group class in the
-	 * blacklist-status list instead, so the standalone flag is not migrated -
-	 * a fresh opt-in avoids silently blocking custom templates on upgrade).
+	 * Option keys of removed features. 2.0: weather + geo data, WP e-Commerce,
+	 * scroll tracking and the non-functional 1.x blacklist-sandboxed flag (not
+	 * migrated to the `sandboxedScripts` group on purpose: a fresh opt-in avoids
+	 * silently blocking custom templates on upgrade). 2.1: the WebToffee v2.x
+	 * consent bridge and the YouTube tracker.
 	 *
 	 * @var string[]
 	 */
@@ -49,30 +49,24 @@ final class Migration {
 		GTM4WP_OPTION_SCROLLER_DISTANCE,
 		GTM4WP_OPTION_SCROLLER_CONTENTID,
 		GTM4WP_OPTION_SCROLLER_READERTIME,
+		GTM4WP_OPTION_INTEGRATE_WEBTOFFEE_GDPR,
+		GTM4WP_OPTION_EVENTS_YOUTUBE,
 	);
 
 	/**
-	 * Blacklist entity ids that are no longer documented by Google and were
-	 * removed from the entity table in 2.0.
-	 *
-	 * Only `ua` (Universal Analytics) belongs here. `mf` (Mouseflow) was
-	 * removed alongside it during the 2.0 refresh, but Google still documents
-	 * it - so it is back in the entity table and must NOT be stripped from
-	 * saved settings, or a site that restricts Mouseflow loses the setting on
-	 * upgrade.
+	 * Blacklist entity ids Google no longer documents, removed from the entity
+	 * table in 2.0. Only `ua` belongs here: `mf` (Mouseflow) is still documented
+	 * and must NOT be stripped, or a site restricting it loses the setting.
 	 *
 	 * @var string[]
 	 */
 	private const REMOVED_BLACKLIST_ENTITIES = array( 'ua' );
 
 	/**
-	 * Runs the pending migrations.
-	 *
-	 * The container row seeding runs on every admin request (it is
-	 * idempotent, self-guarded and served from the options cache) so that
-	 * it cannot be skipped when two builds share the same version string -
-	 * e.g. upgrading between 2.0.0-dev snapshots. The remaining cleanup
-	 * steps run once per plugin version.
+	 * Runs the pending migrations. The seeding steps run on every admin request
+	 * (idempotent, self-guarded, served from the options cache) so they cannot
+	 * be skipped when two builds share a version string; the cleanup runs once
+	 * per plugin version.
 	 *
 	 * @return void
 	 */
@@ -94,21 +88,10 @@ final class Migration {
 
 	/**
 	 * Seeds the post-meta option (new in 2.0) from the legacy "Post Terms"
-	 * option it was split out of.
-	 *
-	 * Until 2.0 a single option emitted BOTH the taxonomy terms and every
-	 * non-underscore-prefixed post meta value, while its description named only
-	 * the taxonomies. Splitting them gives the admin an informed choice, but the
-	 * split must not silently drop data an existing site is already sending to
-	 * Google Tag Manager - so a site that had the combined option ON gets the new
-	 * meta option turned ON as well, preserving the exact data layer it had. A
-	 * site that had it OFF gets the new option OFF.
-	 *
-	 * Runs on every admin request rather than once per version (like
-	 * seed_container_rows()) because it is self-guarded and cheap: it acts only
-	 * while the new key is absent from the stored row, so it can neither run
-	 * twice nor override the admin's own later choice. Sites that never saved
-	 * settings at all have nothing to migrate and fall through to the defaults.
+	 * option it was split out of, which emitted BOTH terms and post meta: a site
+	 * with the combined option ON gets the new one ON too, so the split never
+	 * silently drops data a site already sends. Acts only while the new key is
+	 * absent, so it never overrides the admin's later choice.
 	 *
 	 * @return void
 	 */
@@ -118,13 +101,12 @@ final class Migration {
 			return;
 		}
 
-		// Already migrated (or explicitly saved by the admin): never touch it again.
+		// Already migrated (or saved by the admin): never touch it again.
 		if ( array_key_exists( GTM4WP_OPTION_INCLUDE_POSTMETA, $stored ) ) {
 			return;
 		}
 
-		// No legacy value to migrate from - leave the key absent so the module
-		// default (off) applies, exactly as for a fresh install.
+		// No legacy value: leave the key absent so the module default applies.
 		if ( ! array_key_exists( GTM4WP_OPTION_INCLUDE_POSTTERMLIST, $stored ) ) {
 			return;
 		}
@@ -136,14 +118,8 @@ final class Migration {
 
 	/**
 	 * Builds the per-container row option (new in 2.0) from the flat 1.x
-	 * container options: every container ID inherits the previously shared
-	 * environment, domain and path values (see ContainerRows::from_legacy()
-	 * for the exact rules).
-	 *
-	 * The flat 1.x keys stay untouched in the option row so a downgrade to
-	 * 1.x keeps working; they are also kept in sync on every save of the
-	 * container table. Runs only once: an existing row option is never
-	 * overwritten.
+	 * container options (ContainerRows::from_legacy()). The flat keys stay in the
+	 * row so a downgrade keeps working; an existing row option is never overwritten.
 	 *
 	 * @return void
 	 */

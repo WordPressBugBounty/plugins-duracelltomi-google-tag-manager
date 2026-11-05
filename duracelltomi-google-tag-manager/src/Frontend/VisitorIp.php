@@ -18,39 +18,17 @@ defined( 'ABSPATH' ) || exit;
 final class VisitorIp {
 
 	/**
-	 * Returns the IP address of the user either from the REMOTE_ADDR server variable
-	 * or a custom HTTP header specified in the parameter of the function.
-	 *
-	 * Originally this function iterated through many commonly used custom headers however since they are
-	 * unprotected, one could send a bogus IP address for tracking purposes. Therefore the function only uses
-	 * the safe server variable and a user option to allow one specific custom HTTP header.
-	 *
-	 * A forwarding header is only authentic when the request demonstrably arrived through
-	 * infrastructure the site operator controls, which is what $trusted_proxies states.
-	 * Only REMOTE_ADDR is observed by the server; everything else is a claim the client
-	 * can make. The two header families fail differently, and both are handled here:
-	 *
-	 * - APPEND semantics (X-Forwarded-For): each proxy appends the address IT observed,
-	 *   so the operator's own hops are on the RIGHT and whatever the client sent stays
-	 *   on the left. The client address is the right-most entry that is not one of the
-	 *   operator's proxies - found by walking from the right and stopping at the first
-	 *   entry outside the trusted set. Everything left of that point is client-supplied
-	 *   and must never be scanned for a "better looking" address, which is precisely the
-	 *   spoof this ordering exists to defeat.
-	 * - REPLACE semantics (CF-Connecting-IP, True-Client-IP, X-Real-IP): the proxy
-	 *   OVERWRITES the header, so its value is authoritative - but only if the request
-	 *   actually came through that proxy. On a request delivered straight to the origin,
-	 *   the header is whatever the client typed.
-	 *
-	 * With no trusted proxies configured neither guarantee is available, so the header is
-	 * read exactly as it was before this setting existed (left-to-right for the list form)
-	 * and the value must be treated as visitor-supplied. That state is deliberate for
-	 * backward compatibility, and the admin is warned about it rather than silently
-	 * migrated - see Notices::show_notices().
-	 *
-	 * The function will translate the given custom header to a PHP server variable, no need to directly
-	 * input the PHP form of the header. If the custom header is not found, the function will fall back
-	 * to REMOTE_ADDR.
+	 * Returns the visitor's IP address from REMOTE_ADDR or one configured custom
+	 * HTTP header (translated to its $_SERVER form here), falling back to
+	 * REMOTE_ADDR. Only REMOTE_ADDR is observed by the server; a header is a
+	 * claim, authentic only when the request arrived through a proxy listed in
+	 * $trusted_proxies (RI-18). Two header families: APPEND (X-Forwarded-For -
+	 * the operator's hops are on the RIGHT, the client is the right-most entry
+	 * outside the trusted set, and nothing left of it may be scanned) and
+	 * REPLACE (CF-Connecting-IP, True-Client-IP, X-Real-IP - authoritative only
+	 * when the request came through that proxy). With no trusted proxies the
+	 * header is read as before this setting existed, unauthenticated; the admin
+	 * is warned (Notices::show_notices()) rather than silently migrated.
 	 *
 	 * @param string $use_custom_header A custom HTTP header to use instead of the default REMOTE_ADDR server variable.
 	 * @param string $trusted_proxies   Whitespace/comma separated IP addresses and CIDR ranges of the proxies in front of this site.
@@ -80,11 +58,9 @@ final class VisitorIp {
 	}
 
 	/**
-	 * Reads the configured header with no trusted-proxy information available.
-	 *
-	 * This is the pre-existing behavior, kept verbatim so configuring the header alone
-	 * does not change any site's value: the first public entry of the list form, or the
-	 * whole value for a single-address header. The result is NOT authenticated.
+	 * Reads the configured header with no trusted-proxy information: the
+	 * pre-existing behavior (first public entry of the list form, or the whole
+	 * value), kept verbatim. The result is NOT authenticated.
 	 *
 	 * @param string $header_name  The $_SERVER key being read.
 	 * @param string $header_value The sanitized header value.
@@ -92,11 +68,9 @@ final class VisitorIp {
 	 */
 	private static function read_unverified_header( string $header_name, string $header_value ): string {
 		if ( 'HTTP_X_FORWARDED_FOR' === $header_name ) {
-			// X-Forwarded-For is a comma+space separated list of IPs, so each entry
-			// has to be trimmed before it is validated: without that, every entry
-			// after the first carries a leading space and fails filter_var().
+			// Comma+space separated: trim, or every entry after the first fails filter_var().
 			foreach ( explode( ',', $header_value ) as $entry ) {
-				$entry = trim( $entry );
+				$entry = self::unmap( trim( $entry ) );
 
 				if ( self::is_public_ip( $entry ) ) {
 					return $entry;
@@ -106,7 +80,21 @@ final class VisitorIp {
 			return '';
 		}
 
+		$header_value = self::unmap( $header_value );
+
 		return self::is_public_ip( $header_value ) ? $header_value : '';
+	}
+
+	/**
+	 * Whether this request reached the site through one of the given proxies -
+	 * the gate every replace-style proxy header (an IP, a country) needs before
+	 * its value means anything (RI-18).
+	 *
+	 * @param string[] $trusted Validated IP addresses / CIDR ranges from parse_trusted_proxies().
+	 * @return bool
+	 */
+	public static function request_via_trusted_proxy( array $trusted ): bool {
+		return self::ip_in_any_range( self::remote_addr_any(), $trusted );
 	}
 
 	/**
@@ -118,48 +106,40 @@ final class VisitorIp {
 	 * @return string A public IP address, or an empty string when the header cannot be vouched for.
 	 */
 	private static function read_header_via_trusted_proxies( string $header_name, string $header_value, array $trusted ): string {
-		// The whole point of the trusted set: a header only means anything when the
-		// request reached us through one of those hops. A request delivered straight to
-		// the origin carries whatever headers its sender chose, list form or not.
+		// A header only means anything when the request reached us through one of
+		// the trusted hops; delivered straight to the origin, it is whatever the
+		// sender chose.
 		if ( ! self::ip_in_any_range( self::remote_addr_any(), $trusted ) ) {
 			return '';
 		}
 
 		if ( 'HTTP_X_FORWARDED_FOR' === $header_name ) {
-			$entries = array_map( 'trim', explode( ',', $header_value ) );
+			$entries = array_map( static fn ( $entry ) => self::unmap( trim( $entry ) ), explode( ',', $header_value ) );
 
 			for ( $i = count( $entries ) - 1; $i >= 0; $i-- ) {
 				if ( self::ip_in_any_range( $entries[ $i ], $trusted ) ) {
-					// One of our own hops - keep walking left past it.
 					continue;
 				}
 
-				// The first entry that is not ours IS the client. Stop here and return
-				// it or nothing: continuing left would start reading addresses the
-				// client themselves supplied, which is the spoof this guards against.
+				// The first entry that is not ours IS the client: return it or
+				// nothing. Continuing left would read client-supplied addresses.
 				return self::is_public_ip( $entries[ $i ] ) ? $entries[ $i ] : '';
 			}
 
-			// Every entry was one of our own proxies, so the list never carried a
-			// client address (a purely internal request).
+			// Every entry was one of our own proxies (a purely internal request).
 			return '';
 		}
+
+		$header_value = self::unmap( $header_value );
 
 		return self::is_public_ip( $header_value ) ? $header_value : '';
 	}
 
 	/**
-	 * Parses the operator-supplied trusted proxy list into validated entries.
-	 *
-	 * Accepts whitespace, newline and comma separation so the admin can paste a CDN's
-	 * published range list unedited. Invalid entries are dropped rather than failing the
-	 * whole list, which matches how the sanitizer stores it.
-	 *
-	 * Public for the same reason as normalize_header_name() and is_valid_range(): the
-	 * option's sanitizer must store exactly what this reader will honour. The two ends
-	 * used to share only the VALIDATOR while each kept its own copy of the SPLIT rule,
-	 * three files apart - and a tightening applied to one copy left the other behind
-	 * with nothing going red (PA-2). One rule, one place.
+	 * Parses the trusted proxy list into validated entries. Whitespace, newline
+	 * and comma separated so a CDN's published list pastes unedited; invalid
+	 * entries are dropped. Public so the option's sanitizer stores exactly what
+	 * this reader honours - one split rule, one place (PA-2).
 	 *
 	 * @param string $raw The raw option value.
 	 * @return string[] Validated IP addresses and CIDR ranges.
@@ -179,19 +159,9 @@ final class VisitorIp {
 
 	/**
 	 * Normalizes a configured HTTP header name to its canonical $_SERVER form
-	 * (without the HTTP_ prefix), or returns an empty string when it is not a
-	 * usable header name.
-	 *
-	 * Public for the same reason as is_valid_range() below: the option's sanitizer
-	 * must accept exactly what the reader will honor. Both ends used to carry their
-	 * own copy of this pattern - #62 anchored the read end and #89 the save end,
-	 * and the two literals then sat three files apart with a comment on one saying
-	 * the other was "identical", which is a divergence waiting for the next
-	 * tightening (PA-2).
-	 *
-	 * Anchored on purpose: the unanchored version this replaces matched any string
-	 * CONTAINING one allowed character, so it accepted every input and validated
-	 * nothing.
+	 * (without HTTP_), or '' when unusable. Public so the option's sanitizer
+	 * accepts exactly what the reader honours (PA-2, #62/#89). The pattern is
+	 * anchored on purpose: unanchored, it validated nothing.
 	 *
 	 * @param string $header A header name as the admin typed it (X-Forwarded-For, x_forwarded_for, ...).
 	 * @return string The canonical name (X_FORWARDED_FOR), or '' when invalid.
@@ -207,11 +177,9 @@ final class VisitorIp {
 	}
 
 	/**
-	 * Whether an entry is a valid single IP address or CIDR range.
-	 *
-	 * Public so the option's sanitizer validates with exactly the same rule that the
-	 * reader applies - a stored entry the reader would silently ignore is worse than a
-	 * rejected one, because the admin believes the proxy is covered.
+	 * Whether an entry is a valid single IP address or CIDR range. Public so the
+	 * sanitizer validates with the reader's rule: a stored entry the reader
+	 * silently ignores makes the admin believe the proxy is covered.
 	 *
 	 * @param string $entry A single list entry.
 	 * @return bool
@@ -233,12 +201,8 @@ final class VisitorIp {
 
 		$prefix_length = (int) $prefix;
 
-		// A /0 matches every address, so accepting it would declare the entire
-		// internet a trusted proxy - which restores exactly the verbatim header
-		// trust this option exists to remove, and does it silently: the admin
-		// notice that warns about an unconfigured list keys on the list being
-		// non-empty, so filling it with 0.0.0.0/0 also switches off the one signal
-		// that would have told them.
+		// A /0 would declare the entire internet a trusted proxy, silently: the
+		// unconfigured-list notice keys on the list being non-empty.
 		if ( $prefix_length < 1 ) {
 			return false;
 		}
@@ -270,17 +234,54 @@ final class VisitorIp {
 	}
 
 	/**
-	 * Whether an IP address falls inside one IP address or CIDR range.
+	 * An IPv4-mapped IPv6 address (::ffff:a.b.c.d, any notation) as the IPv4
+	 * address it is (#657): a dual-stack listener reports IPv4 peers that way.
+	 * Anything else is returned unchanged.
 	 *
-	 * Compares the packed binary forms, so IPv4 and IPv6 use one code path. Addresses of
-	 * different families never match (their packed lengths differ), which is the correct
-	 * answer rather than an error.
+	 * @param string $ip A candidate address.
+	 * @return string
+	 */
+	private static function unmap( string $ip ): string {
+		$bin = ( false !== filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 ) ) ? inet_pton( $ip ) : false;
+
+		if ( is_string( $bin ) && 16 === strlen( $bin ) && str_repeat( "\0", 10 ) . "\xff\xff" === substr( $bin, 0, 12 ) ) {
+			return (string) inet_ntop( substr( $bin, 12 ) );
+		}
+
+		return $ip;
+	}
+
+	/**
+	 * A trusted range listed in IPv4-mapped form as its IPv4 equivalent, so it
+	 * keeps matching a peer unmap() has already folded (prefix 96+ only).
+	 *
+	 * @param string $range A validated IP address or CIDR range.
+	 * @return string
+	 */
+	private static function unmap_range( string $range ): string {
+		if ( false === strpos( $range, '/' ) ) {
+			return self::unmap( $range );
+		}
+
+		list( $subnet, $prefix ) = explode( '/', $range, 2 );
+		$folded                  = self::unmap( $subnet );
+
+		return ( $folded !== $subnet && (int) $prefix >= 96 ) ? $folded . '/' . ( (int) $prefix - 96 ) : $range;
+	}
+
+	/**
+	 * Whether an IP address falls inside one IP address or CIDR range. Compares
+	 * packed binary forms after folding IPv4-mapped addresses to IPv4 on both
+	 * sides (otherwise different families never match).
 	 *
 	 * @param string $ip    The address to test. Must already be a valid IP.
 	 * @param string $range A validated IP address or CIDR range.
 	 * @return bool
 	 */
 	private static function ip_in_range( string $ip, string $range ): bool {
+		$ip    = self::unmap( $ip );
+		$range = self::unmap_range( $range );
+
 		if ( false === filter_var( $ip, FILTER_VALIDATE_IP ) ) {
 			return false;
 		}
@@ -337,19 +338,15 @@ final class VisitorIp {
 	 * @return string
 	 */
 	private static function remote_addr(): string {
-		if ( isset( $_SERVER['REMOTE_ADDR'] ) ) {
-			return (string) filter_var( wp_unslash( $_SERVER['REMOTE_ADDR'] ), FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE );
-		}
+		$ip = self::remote_addr_any();
 
-		return '';
+		return self::is_public_ip( $ip ) ? $ip : '';
 	}
 
 	/**
-	 * REMOTE_ADDR as the address of the machine that connected, in ANY range.
-	 *
-	 * Deliberately different from remote_addr(): the immediate peer is normally the
-	 * operator's own load balancer or reverse proxy on a private address, so the
-	 * public-only filter would reject exactly the value the trusted-proxy check needs.
+	 * REMOTE_ADDR in ANY range, unlike remote_addr(): the immediate peer is
+	 * normally the operator's own proxy on a private address, which is exactly
+	 * what the trusted-proxy check needs.
 	 *
 	 * @return string
 	 */
@@ -360,6 +357,6 @@ final class VisitorIp {
 
 		$ip = filter_var( wp_unslash( $_SERVER['REMOTE_ADDR'] ), FILTER_VALIDATE_IP );
 
-		return ( false === $ip ) ? '' : (string) $ip;
+		return ( false === $ip ) ? '' : self::unmap( (string) $ip );
 	}
 }

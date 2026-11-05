@@ -10,9 +10,14 @@
 
 namespace GTM4WP\Modules\ContactForm7;
 
+use GTM4WP\Admin\SiteHealthRows;
+use GTM4WP\Frontend\DefaultLanguage;
 use GTM4WP\Module\AdminSchemaInterface;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\SiteHealthInfoInterface;
+use GTM4WP\Module\StatusInfoInterface;
 use GTM4WP\Options\Field;
+use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -20,7 +25,7 @@ defined( 'ABSPATH' ) || exit;
  * Field definitions of the Contact Form 7 module, ported from the 1.x
  * Integration tab.
  */
-final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface {
+final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface, StatusInfoInterface, SiteHealthInfoInterface {
 
 	/**
 	 * Documentation page of this module on gtm4wp.com. One page covers all three
@@ -78,7 +83,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Contact Form 7', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Check this to fire dataLayer events for Contact Form 7 submissions (supported events: before submit, invalid input, unaccepted terms, spam detected, submission aborted, form submitted, mail sent, mail send failed). Each event carries the form ID, unit tag, container post ID, locale and submission status.', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Pushes data layer events for Contact Form 7 submissions, from the attempt to the outcome (sent, failed, invalid, spam). Each event carries the form ID and name, unit tag, container post ID, locale and submission status.', 'duracelltomi-google-tag-manager' ),
 				group: 'cf7',
 				doc: self::DOC_PAGE
 			),
@@ -105,16 +110,65 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				group: 'cf7',
 				doc: self::DOC_PAGE
 			),
+			new Field(
+				key: GTM4WP_OPTION_INTEGRATE_WPCF7_MASTERLANGUAGE,
+				type: Field::TYPE_CHECKBOX,
+				default_value: false,
+				label: __( 'Report the form name in the default language', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'On WPML or Polylang sites, reports the form name in the site\'s default language, so one form translated into several languages shows as a single form in Google Analytics. Needs forms translated as separate form entries.', 'duracelltomi-google-tag-manager' ),
+				group: 'cf7',
+				phase: Field::PHASE_EXPERIMENTAL,
+				doc: self::DOC_PAGE,
+				unavailable: DefaultLanguage::unavailable_reason( false )
+			),
 		);
 	}
 
 	/**
-	 * The Contact Form 7 module is always available; the tracker script is
-	 * simply inactive without the CF7 plugin.
+	 * The Contact Form 7 module is always available; without the CF7 plugin
+	 * the tracker script is not enqueued (#281).
 	 *
 	 * @return string
 	 */
 	public function unavailable_message(): string {
 		return '';
+	}
+	/**
+	 * {@inheritDoc}
+	 *
+	 * The master switch is the integration option; the host is Contact Form 7,
+	 * reported from its version constant. The module sets no version floor.
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, mixed>
+	 */
+	public function status_info( Options $options ): array {
+		return array(
+			'enabled'     => (bool) $options->get( GTM4WP_OPTION_INTEGRATE_WPCF7 ),
+			'integration' => array(
+				'active'  => defined( 'WPCF7_VERSION' ),
+				'version' => defined( 'WPCF7_VERSION' ) ? (string) constant( 'WPCF7_VERSION' ) : null,
+			),
+		);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function site_health_info( Options $options ): array {
+		$info = $this->status_info( $options );
+
+		return array(
+			'plugin'   => SiteHealthRows::plugin( 'Contact Form 7', $info['integration'] ),
+			'tracking' => SiteHealthRows::on_off( __( 'Form tracking', 'duracelltomi-google-tag-manager' ), $info['enabled'] ),
+			'inputs'   => SiteHealthRows::text( __( 'Form inputs in the data layer', 'duracelltomi-google-tag-manager' ), (string) $options->get( GTM4WP_OPTION_INTEGRATE_WPCF7_INPUTS ) ),
+			'options'  => SiteHealthRows::group(
+				__( 'Options', 'duracelltomi-google-tag-manager' ),
+				SiteHealthRows::states( $options, array( GTM4WP_OPTION_INTEGRATE_WPCF7_GA4EVENTS, GTM4WP_OPTION_INTEGRATE_WPCF7_MASTERLANGUAGE ) )
+			),
+		);
 	}
 }

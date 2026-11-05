@@ -10,9 +10,12 @@
 
 namespace GTM4WP\Modules\Container;
 
+use GTM4WP\Admin\SiteHealthRows;
 use GTM4WP\Module\AdminSchemaInterface;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\SiteHealthInfoInterface;
 use GTM4WP\Options\Field;
+use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -20,7 +23,7 @@ defined( 'ABSPATH' ) || exit;
  * Field definitions of the container module. Labels and descriptions are
  * ported from the 1.x General and Advanced admin tabs.
  */
-final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface {
+final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface, SiteHealthInfoInterface {
 
 	/**
 	 * Documentation page of this module on gtm4wp.com.
@@ -86,10 +89,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	 * @return Field[]
 	 */
 	public function fields(): array {
-		// Build the list of user roles as checkboxes, as in 1.x. wp_roles()
-		// lives in wp-includes so it is available both on the settings page
-		// and during REST saves; the guard keeps unit tests (which never load
-		// WordPress) working with an empty choice list.
+		// User role choices as in 1.x; the guard keeps the unit tests working.
 		$role_choices = array();
 		if ( function_exists( 'wp_roles' ) ) {
 			foreach ( wp_roles()->get_names() as $role_slug => $role_name ) {
@@ -97,10 +97,8 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 			}
 		}
 
-		// Every column a valid GTM4WP_HARDCODED_* constant takes over is rendered
-		// read-only, and the row set is frozen when the constants also decide
-		// which containers are loaded. Without this the screen would show - and
-		// happily save - a container setup the frontend silently overrides.
+		// Columns a valid GTM4WP_HARDCODED_* constant takes over render
+		// read-only, so the screen never saves a setup the frontend overrides.
 		$locks   = HardcodedContainers::locks();
 		$columns = array(
 			array(
@@ -309,18 +307,12 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				description: esc_html__( 'In some cases you need to rename the dataLayer variable. You can enter your name here. Leave blank for default name: dataLayer', 'duracelltomi-google-tag-manager' ),
 				group: 'advanced',
 				sanitizer: static function ( $value ) {
-					// Field::to_string() keeps the cast warning-free on non-scalar
-					// import values (a custom sanitizer replaces the type-defensive
-					// default in Field::sanitize(), it does not run in front of it).
+					// A custom sanitizer replaces the type-defensive default.
 					$value = trim( Field::to_string( $value ) );
 
-					// The reader's own predicate, not a second copy of the rule
-					// (PA-2). The name is emitted UNQUOTED into a <script> body,
-					// so this allow-list has to be the JavaScript identifier
-					// grammar - no escaper can rescue a bare identifier. The 1.x
-					// rule this replaces admitted '-', which JavaScript reads as
-					// the subtraction operator: the settings screen accepted a
-					// name that made every GTM4WP script block a SyntaxError.
+					// The reader's own predicate (PA-2): the name is emitted UNQUOTED
+					// into a <script> body, so the JS identifier grammar is the only
+					// control (the 1.x rule admitted '-', a SyntaxError).
 					if ( ( '' !== $value ) && ! ContainerRows::is_valid_js_identifier( $value ) ) {
 						return new \WP_Error(
 							'gtm4wp_invalid_datalayer_name',
@@ -369,11 +361,10 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				group: 'advanced',
 				choices: $role_choices,
 				sanitizer: static function ( $value ) {
-					// The admin UI submits an array of role ids; stored as comma separated string as in 1.x.
-					// Field::to_string() per element: a crafted import can nest arrays
-					// inside the list, and sanitize_key() warns on a non-string.
+					// Array of role ids from the UI, stored comma separated as in 1.x.
+					// Field::to_string() per element: an import can nest arrays.
 					if ( is_array( $value ) ) {
-						return implode( ',', array_map( static fn ( $one ) => sanitize_key( Field::to_string( $one ) ), $value ) );
+						return implode( ',', array_filter( array_map( static fn ( $one ) => sanitize_key( Field::to_string( $one ) ), $value ) ) );
 					}
 
 					return implode( ',', array_filter( array_map( 'sanitize_key', explode( ',', Field::to_string( $value ) ) ) ) );
@@ -384,19 +375,10 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	}
 
 	/**
-	 * Description of the container table.
-	 *
-	 * The static part is followed by a live readout whenever a GTM4WP_HARDCODED_*
-	 * constant is in effect: a wp-config.php file is invisible from the admin, so
-	 * a read-only control on its own would leave the admin wondering why the
-	 * table cannot be edited. The readout names every constant that is actually
-	 * being applied (a malformed one overrides nothing and is reported by the
-	 * admin notice instead), and promises what the save route enforces - the
-	 * stored container setup is kept and used again once the constants are gone.
-	 *
-	 * Rendered as HTML in the settings app (FieldControl's help slot, an
-	 * innerHTML sink - PA-13); the constant names are class constants of
-	 * HardcodedContainers, never user input.
+	 * Description of the container table, followed by a live readout naming
+	 * every GTM4WP_HARDCODED_* constant in effect (wp-config.php is invisible
+	 * from the admin). Rendered as HTML (an innerHTML sink, PA-13); the constant
+	 * names are class constants, never user input.
 	 *
 	 * @param array{columns: array<string, string>, rows: string[]} $locks Lock report of HardcodedContainers::locks().
 	 * @return string
@@ -415,7 +397,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 			)
 		);
 
-		if ( array() === $locks['columns'] ) {
+		if ( ! HardcodedContainers::locks_any( $locks ) ) {
 			return $intro;
 		}
 
@@ -441,41 +423,29 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	}
 
 	/**
-	 * Description of the "only output on production environments" option.
-	 *
-	 * The effect of this option depends entirely on WP_ENVIRONMENT_TYPE, which
-	 * lives in wp-config.php / the server config and is invisible from the
-	 * admin - so the static explanation is followed by a live readout of what
-	 * THIS instance actually reports, and what turning the option on would do
-	 * here. The common trap is a staging copy with no WP_ENVIRONMENT_TYPE set:
-	 * WordPress then reports "production" and the container keeps loading.
-	 *
-	 * The readout is rendered as HTML in the settings app (FieldControl's help
-	 * slot, an innerHTML sink - PA-13), so the environment value is escaped even
-	 * though wp_get_environment_type() can only return one of the four values
-	 * whitelisted by WordPress core.
+	 * Description of the "only output on production environments" option,
+	 * followed by a live readout of what THIS instance reports, since
+	 * WP_ENVIRONMENT_TYPE is invisible from the admin and an unset value
+	 * silently means "production". Rendered as HTML (innerHTML sink, PA-13), so
+	 * the value is escaped although core whitelists it.
 	 *
 	 * @return string
 	 */
 	private function production_only_description(): string {
-		$intro = esc_html__( 'When turned on, the GTM container code is only output when WordPress reports the environment type as "production". On any other environment (local, development, staging) the container is suppressed while the data layer stays active - so a cloned or staging copy of your site does not send hits to your live Google Tag Manager container without deactivating the plugin. This relies on the WP_ENVIRONMENT_TYPE constant (or WP_ENVIRONMENT_TYPE environment variable) being set on non-production copies; it defaults to "production" when unset. For host-based control without an option, return false from the gtm4wp_output_container filter.', 'duracelltomi-google-tag-manager' );
+		$intro = esc_html__( 'When turned on, the GTM container code is only output when WordPress reports the environment type as "production". On any other environment (local, development, staging) the container is suppressed while the data layer stays active - so a cloned or staging copy of your site does not send hits to your live Google Tag Manager container without deactivating the plugin. Google Data Manager refunds are held back there too. This relies on the WP_ENVIRONMENT_TYPE constant (or WP_ENVIRONMENT_TYPE environment variable) being set on non-production copies; it defaults to "production" when unset. For host-based control without an option, return false from the gtm4wp_output_container filter.', 'duracelltomi-google-tag-manager' );
 
-		// Resolved exactly as ContainerCode::should_output_container() does, so
-		// the readout can never disagree with the gate it describes.
-		// wp_get_environment_type() ships with WordPress 5.5+; the guard mirrors
-		// that sibling and falls back to core's own default.
-		$environment = function_exists( 'wp_get_environment_type' ) ? wp_get_environment_type() : 'production';
+		// What the sink would do with the option on (#363: the shared definition).
+		$suppressed  = ContainerRows::environment_suppression( true );
+		$environment = ContainerRows::environment_type();
 
-		// Whether the value was set at all, looked up the same way core does.
-		// An unset WP_ENVIRONMENT_TYPE silently resolves to "production", which
-		// is worth calling out separately from an explicit "production".
+		// Whether the value was set at all, looked up the way core does.
 		$is_configured = defined( 'WP_ENVIRONMENT_TYPE' ) || false !== getenv( 'WP_ENVIRONMENT_TYPE' );
 
-		if ( 'production' !== $environment ) {
+		if ( '' !== $suppressed ) {
 			$effect = sprintf(
 				/* translators: %s: the environment type reported by WordPress, e.g. "staging". */
 				esc_html__( 'On this site WordPress currently reports the environment type "%s", so with this option turned on the GTM container is NOT loaded here (the data layer stays active).', 'duracelltomi-google-tag-manager' ),
-				esc_html( $environment )
+				esc_html( $suppressed )
 			);
 		} elseif ( $is_configured ) {
 			$effect = sprintf(
@@ -497,5 +467,73 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	 */
 	public function unavailable_message(): string {
 		return '';
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * StatusReport's facts as rows: container ids, domains and paths are in
+	 * the loader URL of every page; the environment tokens are reported as
+	 * set/not set, never by value.
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function site_health_info( Options $options ): array {
+		$report     = ( new StatusReport( $options ) )->report();
+		$containers = array();
+		$debug      = array();
+
+		foreach ( $report['containers'] as $container ) {
+			$facts = array(
+				$container['environment'] ? 'yes' : 'no',
+				( '' !== $container['domain'] ) ? $container['domain'] : '-',
+				( '' !== $container['path'] ) ? $container['path'] : '-',
+				$container['omit_id'] ? 'yes' : 'no',
+			);
+
+			$containers[ $container['id'] ] = sprintf(
+				/* translators: 1: yes/no - whether a GTM environment is configured. 2: custom loader domain or a dash. 3: custom loader path or a dash. 4: yes/no - whether the container ID is left out of the loader URL. */
+				__( 'environment: %1$s, domain: %2$s, path: %3$s, ID omitted: %4$s', 'duracelltomi-google-tag-manager' ),
+				...$facts
+			);
+			$debug[ $container['id'] ] = sprintf( 'environment: %1$s, domain: %2$s, path: %3$s, ID omitted: %4$s', ...$facts );
+		}
+
+		$name  = $report['datalayer_name'];
+		$roles = array_filter( array_map( 'trim', explode( ',', (string) $options->get( GTM4WP_OPTION_NOGTMFORLOGGEDIN ) ) ) );
+
+		return array(
+			'containers'            => SiteHealthRows::assoc( __( 'Containers', 'duracelltomi-google-tag-manager' ), $containers, $debug ),
+			'placement'             => SiteHealthRows::text( __( 'Container code placement', 'duracelltomi-google-tag-manager' ), $report['placement'] ),
+			'container_code_output' => SiteHealthRows::yes_no( __( 'Container code output', 'duracelltomi-google-tag-manager' ), $report['container_code_output'] ),
+			'datalayer_name'        => $name['valid']
+				? SiteHealthRows::text( __( 'Data layer variable', 'duracelltomi-google-tag-manager' ), $name['effective'] )
+				: SiteHealthRows::text(
+					__( 'Data layer variable', 'duracelltomi-google-tag-manager' ),
+					/* translators: 1: the configured name. 2: the name in use. */
+					sprintf( __( 'configured "%1$s", using "%2$s" (invalid)', 'duracelltomi-google-tag-manager' ), $name['configured'], $name['effective'] ),
+					sprintf( 'configured "%1$s", using "%2$s" (invalid)', $name['configured'], $name['effective'] )
+				),
+			'hardcoded'             => $report['hardcoded']['active']
+				? SiteHealthRows::assoc(
+					__( 'wp-config.php overrides', 'duracelltomi-google-tag-manager' ),
+					array(
+						'columns'     => implode( ', ', $report['hardcoded']['locked_columns'] ),
+						'rows_locked' => SiteHealthRows::yes_no( '', $report['hardcoded']['locked_rows'] )['value'],
+					),
+					array(
+						'columns'     => implode( ', ', $report['hardcoded']['locked_columns'] ),
+						'rows_locked' => $report['hardcoded']['locked_rows'] ? 'yes' : 'no',
+					)
+				)
+				: SiteHealthRows::on_off( __( 'wp-config.php overrides', 'duracelltomi-google-tag-manager' ), false ),
+			'hardcoded_errors'      => SiteHealthRows::items( __( 'Rejected wp-config.php constants', 'duracelltomi-google-tag-manager' ), $report['hardcoded']['errors'] ),
+			'options'               => SiteHealthRows::group(
+				__( 'Loading options', 'duracelltomi-google-tag-manager' ),
+				SiteHealthRows::states( $options, array( GTM4WP_OPTION_LOADEARLY, GTM4WP_OPTION_NOCONSOLELOG, GTM4WP_OPTION_PRODUCTIONONLY ) )
+			),
+			'disabled_for_roles'    => SiteHealthRows::items( __( 'Container disabled for roles', 'duracelltomi-google-tag-manager' ), $roles ),
+		);
 	}
 }

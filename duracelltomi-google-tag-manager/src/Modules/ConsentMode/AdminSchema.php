@@ -10,16 +10,19 @@
 
 namespace GTM4WP\Modules\ConsentMode;
 
+use GTM4WP\Admin\SiteHealthRows;
 use GTM4WP\Module\AdminSchemaInterface;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\SiteHealthInfoInterface;
 use GTM4WP\Options\Field;
+use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
 
 /**
  * Field definitions of the consent module, ported from the 1.x Integration tab.
  */
-final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface {
+final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface, SiteHealthInfoInterface {
 
 	/**
 	 * Documentation hub of this module on gtm4wp.com and the per-tool setup
@@ -31,12 +34,6 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	private const DOC_COOKIEBOT = self::DOC_BASE . '/cookiebot-gtm4wp-how-to-setup';
 	private const DOC_COOKIEYES = self::DOC_BASE . '/cookieyes-gtm4wp-how-to-setup';
 	private const DOC_AXEPTIO   = self::DOC_BASE . '/axeptio-gtm4wp-how-to-setup';
-
-	/**
-	 * The WebToffee guide predates the consent hub and still lives beside it
-	 * rather than under it.
-	 */
-	private const DOC_WEBTOFFEE = 'setup-gtm4wp-features/webtoffee-gdpr-cookie-consent-plugin-gtm4wp-how-to-setup';
 
 	/**
 	 * Module documentation page.
@@ -74,7 +71,6 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 		return array(
 			'consent-mode' => __( 'Google Consent Mode', 'duracelltomi-google-tag-manager' ),
 			'cookiebot'    => __( 'Cookiebot', 'duracelltomi-google-tag-manager' ),
-			'webtoffee'    => __( 'WebToffee GDPR Cookie Consent', 'duracelltomi-google-tag-manager' ),
 			'cookieyes'    => __( 'CookieYes', 'duracelltomi-google-tag-manager' ),
 			'axeptio'      => __( 'Axeptio', 'duracelltomi-google-tag-manager' ),
 		);
@@ -185,19 +181,6 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				doc: self::DOC_COOKIEBOT
 			),
 			new Field(
-				key: GTM4WP_OPTION_INTEGRATE_WEBTOFFEE_GDPR,
-				type: Field::TYPE_CHECKBOX,
-				default_value: false,
-				label: __( 'WebToffee GDPR Cookie Consent (v2.x)', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__(
-					'Enabling this feature will fire a GTM event (cookie_consent_update) when the consent banner has been closed with consents being set or during pageload when previously set consents have been found. Deprecated: this integration only targets the long-outdated WebToffee GDPR Cookie Consent v2.x product line. You do not need it with v3.x or above, which ships all the necessary code to integrate the consent banner with Google Tag Manager natively - please upgrade the WebToffee plugin instead of using this option.',
-					'duracelltomi-google-tag-manager'
-				),
-				group: 'webtoffee',
-				phase: Field::PHASE_DEPRECATED,
-				doc: self::DOC_WEBTOFFEE
-			),
-			new Field(
 				key: GTM4WP_OPTION_INTEGRATE_COOKIEYES,
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
@@ -221,7 +204,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				default_value: false,
 				label: __( 'Enable Axeptio', 'duracelltomi-google-tag-manager' ),
 				description: esc_html__(
-					'Enable this to let GTM4WP load the Axeptio CMP SDK directly. No separate Axeptio plugin is required. Enter your Axeptio project ID and cookies version below.',
+					'Loads the Axeptio CMP SDK directly, without a separate Axeptio plugin; enter your project ID and cookies version below. A gtm4wp.axeptioConsentUpdate event is pushed whenever the visitor updates their choices.',
 					'duracelltomi-google-tag-manager'
 				),
 				group: 'axeptio',
@@ -257,7 +240,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				default_value: false,
 				label: __( 'Enable Google Consent Mode v2', 'duracelltomi-google-tag-manager' ),
 				description: esc_html__(
-					'When enabled, Axeptio drives Google Consent Mode v2: it fires both the "default" (everything denied) and the "update" commands using its certified vendor mapping. Use this instead of the plugin\'s own "Google Consent Mode" feature, and do not enable both. A dedicated dataLayer event (gtm4wp.axeptioConsentUpdate) is also pushed whenever the visitor updates their choices.',
+					'When enabled, Axeptio drives Google Consent Mode v2: it fires both the "default" (everything denied) and the "update" commands using its certified vendor mapping. Use this instead of the plugin\'s own "Google Consent Mode" feature, and do not enable both.',
 					'duracelltomi-google-tag-manager'
 				),
 				group: 'axeptio',
@@ -273,5 +256,59 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	 */
 	public function unavailable_message(): string {
 		return '';
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * The Axeptio project id is in the public HTML, but set/empty is all a
+	 * support thread needs.
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function site_health_info( Options $options ): array {
+		$signals = array(
+			GTM4WP_OPTION_INTEGRATE_CONSENTMODE_ADS,
+			GTM4WP_OPTION_INTEGRATE_CONSENTMODE_AD_USER_DATA,
+			GTM4WP_OPTION_INTEGRATE_CONSENTMODE_AD_PERSO,
+			GTM4WP_OPTION_INTEGRATE_CONSENTMODE_ANALYTICS,
+			GTM4WP_OPTION_INTEGRATE_CONSENTMODE_PERSO,
+			GTM4WP_OPTION_INTEGRATE_CONSENTMODE_FUNC,
+			GTM4WP_OPTION_INTEGRATE_CONSENTMODE_SECURUTY,
+		);
+		$tools   = array(
+			GTM4WP_OPTION_INTEGRATE_COOKIEBOT,
+			GTM4WP_OPTION_INTEGRATE_COOKIEYES,
+			GTM4WP_OPTION_INTEGRATE_AXEPTIO,
+		);
+
+		$rows = array(
+			'consent_mode'       => SiteHealthRows::on_off( __( 'Consent mode defaults', 'duracelltomi-google-tag-manager' ), (bool) $options->get( GTM4WP_OPTION_INTEGRATE_CONSENTMODE ) ),
+			'granted_by_default' => SiteHealthRows::group( __( 'Signals granted by default', 'duracelltomi-google-tag-manager' ), SiteHealthRows::states( $options, $signals ) ),
+			'consent_tools'      => SiteHealthRows::group( __( 'Consent tool integrations', 'duracelltomi-google-tag-manager' ), SiteHealthRows::states( $options, $tools ) ),
+		);
+
+		if ( $options->get( GTM4WP_OPTION_INTEGRATE_AXEPTIO ) ) {
+			$project = SiteHealthRows::set_or_empty( '', (string) $options->get( GTM4WP_OPTION_INTEGRATE_AXEPTIO_PROJECTID ) );
+			$version = SiteHealthRows::set_or_empty( '', (string) $options->get( GTM4WP_OPTION_INTEGRATE_AXEPTIO_COOKIES_VERSION ) );
+			$consent = SiteHealthRows::on_off( '', (bool) $options->get( GTM4WP_OPTION_INTEGRATE_AXEPTIO_CONSENTMODE ) );
+
+			$rows['axeptio'] = SiteHealthRows::assoc(
+				__( 'Axeptio', 'duracelltomi-google-tag-manager' ),
+				array(
+					'project_id'      => $project['value'],
+					'cookies_version' => $version['value'],
+					'consent_mode'    => $consent['value'],
+				),
+				array(
+					'project_id'      => $project['debug'],
+					'cookies_version' => $version['debug'],
+					'consent_mode'    => $consent['debug'],
+				)
+			);
+		}
+
+		return $rows;
 	}
 }

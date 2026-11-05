@@ -10,10 +10,14 @@
 
 namespace GTM4WP\Modules\PageVariables;
 
+use GTM4WP\Admin\SiteHealthRows;
+use GTM4WP\Frontend\DefaultLanguage;
 use GTM4WP\Frontend\VisitorIp;
 use GTM4WP\Module\AdminSchemaInterface;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\SiteHealthInfoInterface;
 use GTM4WP\Options\Field;
+use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -21,7 +25,7 @@ defined( 'ABSPATH' ) || exit;
  * Field definitions of the page variables module. Labels and descriptions
  * are ported from the 1.x Basic data admin tab.
  */
-final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface {
+final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface, SiteHealthInfoInterface {
 
 	/**
 	 * Documentation hub of this module on gtm4wp.com, and the pages below it that
@@ -35,13 +39,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	private const DOC_SEARCH    = self::DOC_BASE . '/site-search-usage-on-your-wordpress-site';
 	private const DOC_TAXONOMY  = self::DOC_BASE . '/wordpress-taxonomy-llisting-page-post-count-in-google-tag-manager';
 	private const DOC_MULTISITE = self::DOC_BASE . '/wordpress-multisite-information';
-
-	/**
-	 * The Cloudflare country code is the one option of this module documented
-	 * under the third party data hub rather than the basic data one, because it
-	 * is the surviving part of the retired geo integration.
-	 */
-	private const DOC_GEO = 'use-special-3rd-party-data-in-google-tag-manager/track-country-city-and-other-geo-data-of-the-current-visitor';
+	private const DOC_GEO       = self::DOC_BASE . '/track-country-city-and-other-geo-data-of-the-current-visitor';
 
 	/**
 	 * Module documentation page.
@@ -97,7 +95,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: true,
 				label: __( 'Posttype of current post/archive', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Check this option to include the type of the current post or archive page (post, page or any custom post type).', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Check this option to include the type of the current post or archive page (post, page or any custom post type) in pagePostType. Search results and 404 pages report search-results and 404-error even when this is off.', 'duracelltomi-google-tag-manager' ),
 				group: 'post',
 				doc: self::DOC_POST
 			),
@@ -220,24 +218,14 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				group: 'post',
 				depends_on: GTM4WP_OPTION_INCLUDE_POSTMETA,
 				sanitizer: static function ( $value ) {
-					// Type-defensive: a custom sanitizer REPLACES Field::sanitize()'s
-					// type-based branches, so it never sits behind to_string() (RI-6).
+					// A custom sanitizer REPLACES the type-defensive default (RI-6).
 					$value = Field::to_string( $value );
 
-					// Normalized with the READER's own parser, so what is stored is
-					// exactly the list PageVariablesModule will honour - one rule, one
-					// place (PA-2). Stored one key per line, which is how the textarea
-					// renders it back.
-					//
-					// There is deliberately NO per-entry validator here, unlike the two
-					// sanitizers below: a WordPress meta key has no grammar to validate
-					// against - core's add_metadata()/update_metadata() only unslash it,
-					// never sanitize it - so any pattern would be inventing one (UC-5).
-					// sanitize_textarea_field() is not the missing piece either: it
-					// keeps control characters and STRIPS %xx sequences, so a legitimate
-					// key such as my%2ffield would be stored as myfield and then match
-					// nothing. The value reaches no output sink; it is only ever
-					// compared with in_array().
+					// Normalized with the READER's own parser (PA-2), one key per line.
+					// Deliberately NO per-entry validator: a meta key has no grammar
+					// (core never sanitizes it), so a pattern would invent one (UC-5),
+					// and sanitize_textarea_field() would strip %xx from a legitimate
+					// key. The value reaches no output sink, only in_array().
 					return implode( "\n", PageVariablesModule::parse_meta_key_list( $value ) );
 				},
 				doc: self::DOC_POST
@@ -342,6 +330,17 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				doc: self::DOC_POST
 			),
 			new Field(
+				key: GTM4WP_OPTION_INCLUDE_MASTERLANGUAGE,
+				type: Field::TYPE_CHECKBOX,
+				default_value: false,
+				label: __( 'Output values in the default language', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'On WPML or Polylang sites, outputs the post title, category slugs, tags and taxonomy terms in the site\'s default language, so Google Analytics combines all translations of a page. The variables keep their names.', 'duracelltomi-google-tag-manager' ),
+				group: 'content',
+				phase: Field::PHASE_EXPERIMENTAL,
+				doc: self::DOC_POST,
+				unavailable: DefaultLanguage::unavailable_reason( true )
+			),
+			new Field(
 				key: GTM4WP_OPTION_INCLUDE_SEARCHDATA,
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
@@ -391,7 +390,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Logged in user email', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Check this option to include the email address of the logged in user.', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Check this option to include the email address of the logged in user as visitorEmail and its SHA-256 hash as visitorEmailHash (lower-cased and normalized the way Google matches user-provided data). Both are omitted for a logged-out visitor.', 'duracelltomi-google-tag-manager' ),
 				group: 'visitor',
 				doc: self::DOC_VISITOR
 			),
@@ -400,7 +399,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Logged in user creation date', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Check this option to include the date of creation (registration) of the logged in user.', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Check this option to include the registration date of the logged in user, as a Unix timestamp in visitorRegistrationDate.', 'duracelltomi-google-tag-manager' ),
 				group: 'visitor',
 				doc: self::DOC_VISITOR
 			),
@@ -422,14 +421,9 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				group: 'visitor',
 				depends_on: GTM4WP_OPTION_INCLUDE_VISITOR_IP,
 				sanitizer: static function ( $value ) {
-					// Field::to_string() keeps the cast warning-free on non-scalar
-					// import values (a custom sanitizer replaces the type-defensive
-					// default in Field::sanitize(), it does not run in front of it).
-					// The name is then validated with the READER's own predicate, so
-					// what is stored is exactly what VisitorIp::get() will honor -
-					// #62 anchored the read end and #89 the save end, each with its
-					// own copy of the pattern, and two copies of an allow-list is a
-					// divergence waiting for the next tightening (PA-2). One rule now.
+					// Field::to_string() keeps the cast warning-free; then the READER's
+					// own predicate, so what is stored is what VisitorIp::get() honours
+					// (PA-2, #62/#89).
 					return VisitorIp::normalize_header_name( Field::to_string( $value ) );
 				},
 				doc: self::DOC_VISITOR
@@ -442,19 +436,15 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				description: esc_html__( 'The IP addresses or CIDR ranges of the reverse proxies, load balancers and CDNs that sit in front of this site - one per line, or comma separated. This is what makes the custom header above trustworthy: with it set, an X-Forwarded-For list is read from the right (skipping your own hops) and a single-value header such as CF-Connecting-IP is only used when the request really did arrive through one of these addresses. Leave it empty if nothing sits in front of your site. Cloudflare publishes its ranges at cloudflare.com/ips; for a load balancer inside your own network the address is usually a private range such as 10.0.0.0/8.', 'duracelltomi-google-tag-manager' ),
 				group: 'visitor',
 				phase: Field::PHASE_BETA,
-				depends_on: GTM4WP_OPTION_INCLUDE_VISITOR_IP,
+				// Either reader of a proxy header keeps the list editable (#272).
+				depends_on: GTM4WP_OPTION_INCLUDE_VISITOR_IP . ',' . GTM4WP_OPTION_INCLUDE_MISCGEOCF,
 				sanitizer: static function ( $value ) {
-					// Type-defensive: a custom sanitizer REPLACES Field::sanitize()'s
-					// type-based branches, so it never sits behind to_string() (RI-6).
+					// A custom sanitizer REPLACES the type-defensive default (RI-6).
 					$value = Field::to_string( $value );
 
-					// Parsed AND validated with the reader's own method, so what is
-					// stored is exactly what VisitorIp::get() will honor - splitting
-					// rule included. An entry the reader would quietly skip is worse
-					// than a rejected one: the admin believes that proxy is covered
-					// when it is not. This used to keep its own copy of the split
-					// while sharing only the validator, which is the divergence PA-2
-					// is about.
+					// Parsed AND validated with the reader's own method, split rule
+					// included (PA-2): an entry the reader would skip makes the admin
+					// believe that proxy is covered.
 					return implode( "\n", VisitorIp::parse_trusted_proxies( $value ) );
 				},
 				doc: self::DOC_VISITOR
@@ -464,7 +454,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Cloudflare country code', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Add the country code of the user provided by Cloudflare (if Cloudflare is used with your site)', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Adds the visitor\'s country code from Cloudflare, if your site runs behind Cloudflare. With trusted proxy addresses set above, the header is read only from requests that came through them.', 'duracelltomi-google-tag-manager' ),
 				group: 'visitor',
 				phase: Field::PHASE_EXPERIMENTAL,
 				doc: self::DOC_GEO
@@ -474,7 +464,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Site ID', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'ID of the current site in a WordPress Multisite environment', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'ID of the current site in siteID: the site ID in a WordPress Multisite network, 1 on a single site.', 'duracelltomi-google-tag-manager' ),
 				group: 'site',
 				doc: self::DOC_MULTISITE
 			),
@@ -483,7 +473,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Site name', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Name of the current site in a WordPress Multisite environment', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Name of the current site in siteName, on a single site and in a WordPress Multisite network.', 'duracelltomi-google-tag-manager' ),
 				group: 'site',
 				doc: self::DOC_MULTISITE
 			),
@@ -497,5 +487,49 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	 */
 	public function unavailable_message(): string {
 		return '';
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * ⛔ The header name and the proxy list are infrastructure detail and the
+	 * meta keys name what the site stores: only states and counts leave here.
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function site_health_info( Options $options ): array {
+		$switches = array();
+
+		foreach ( ( new PageVariablesModule() )->defaults() as $key => $default_value ) {
+			if ( is_bool( $default_value ) ) {
+				$switches[ $key ] = (bool) $options->get( $key );
+			}
+		}
+
+		$label = __( 'Visitor IP address', 'duracelltomi-google-tag-manager' );
+
+		if ( ! $options->get( GTM4WP_OPTION_INCLUDE_VISITOR_IP ) ) {
+			$visitor_ip = SiteHealthRows::on_off( $label, false );
+		} elseif ( '' === trim( (string) $options->get( GTM4WP_OPTION_INCLUDE_VISITOR_IP_HEADER ) ) ) {
+			$visitor_ip = SiteHealthRows::text( $label, __( 'on, default header', 'duracelltomi-google-tag-manager' ), 'on, default header' );
+		} else {
+			$proxies    = count( VisitorIp::parse_trusted_proxies( (string) $options->get( GTM4WP_OPTION_INCLUDE_VISITOR_IP_PROXIES ) ) );
+			$visitor_ip = SiteHealthRows::text(
+				$label,
+				/* translators: %d: number of trusted proxy addresses. */
+				sprintf( __( 'on, custom header, %d trusted proxies', 'duracelltomi-google-tag-manager' ), $proxies ),
+				sprintf( 'on, custom header, %d trusted proxies', $proxies )
+			);
+		}
+
+		return array(
+			'variables'      => SiteHealthRows::group( __( 'Page variables', 'duracelltomi-google-tag-manager' ), $switches ),
+			'post_meta_keys' => SiteHealthRows::count(
+				__( 'Post meta keys', 'duracelltomi-google-tag-manager' ),
+				count( PageVariablesModule::parse_meta_key_list( (string) $options->get( GTM4WP_OPTION_INCLUDE_POSTMETA_KEYS ) ) )
+			),
+			'visitor_ip'     => $visitor_ip,
+		);
 	}
 }

@@ -10,22 +10,25 @@
 
 namespace GTM4WP\Modules\ClientDeviceData;
 
+use GTM4WP\Admin\SiteHealthRows;
 use GTM4WP\Module\AdminSchemaInterface;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\SiteHealthInfoInterface;
 use GTM4WP\Options\Field;
+use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
 
 /**
  * Field definitions of the client device data module.
  */
-final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface {
+final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface, SiteHealthInfoInterface {
 
 	/**
 	 * Documentation hub of this module on gtm4wp.com. Each of the three options
 	 * has a page of its own below it.
 	 */
-	private const DOC_PAGE = 'use-special-3rd-party-data-in-google-tag-manager';
+	private const DOC_PAGE = 'use-basic-wordpress-data-in-google-tag-manager';
 
 	/**
 	 * Module documentation page.
@@ -95,7 +98,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Device data', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Check this option to include the type of device the user is currently using (desktop or mobile) including model data where available.', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Check this option to include the type of device the user is currently using (desktop, tablet or mobile) including model data where available.', 'duracelltomi-google-tag-manager' ),
 				group: 'device',
 				doc: self::DOC_PAGE . '/device-attributes-in-the-data-layer'
 			),
@@ -109,5 +112,20 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	 */
 	public function unavailable_message(): string {
 		return '';
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function site_health_info( Options $options ): array {
+		return array(
+			'options' => SiteHealthRows::group(
+				__( 'Browser, OS and device data', 'duracelltomi-google-tag-manager' ),
+				SiteHealthRows::states( $options, array( GTM4WP_OPTION_INCLUDE_BROWSERDATA, GTM4WP_OPTION_INCLUDE_OSDATA, GTM4WP_OPTION_INCLUDE_DEVICEDATA ) )
+			),
+		);
 	}
 }

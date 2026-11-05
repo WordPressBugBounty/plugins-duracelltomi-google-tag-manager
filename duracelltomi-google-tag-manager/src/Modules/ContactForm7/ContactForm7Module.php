@@ -10,6 +10,7 @@
 
 namespace GTM4WP\Modules\ContactForm7;
 
+use GTM4WP\Frontend\DefaultLanguage;
 use GTM4WP\Frontend\ScriptTag;
 use GTM4WP\Module\AbstractModule;
 
@@ -37,9 +38,10 @@ final class ContactForm7Module extends AbstractModule {
 	 */
 	public function defaults(): array {
 		return array(
-			GTM4WP_OPTION_INTEGRATE_WPCF7           => false,
-			GTM4WP_OPTION_INTEGRATE_WPCF7_INPUTS    => 'full',
-			GTM4WP_OPTION_INTEGRATE_WPCF7_GA4EVENTS => false,
+			GTM4WP_OPTION_INTEGRATE_WPCF7                => false,
+			GTM4WP_OPTION_INTEGRATE_WPCF7_INPUTS         => 'full',
+			GTM4WP_OPTION_INTEGRATE_WPCF7_GA4EVENTS      => false,
+			GTM4WP_OPTION_INTEGRATE_WPCF7_MASTERLANGUAGE => false,
 		);
 	}
 
@@ -51,7 +53,7 @@ final class ContactForm7Module extends AbstractModule {
 	protected function register_frontend_hooks(): void {
 		// Without Contact Form 7 the tracker has nothing to listen to, so it is
 		// not enqueued (#281). Checked here, not in is_available(): the admin
-		// panel reads that as "module unavailable".
+		// panel and the get-status ability read that as "module unavailable".
 		if ( ! $this->opt( GTM4WP_OPTION_INTEGRATE_WPCF7 ) || ! defined( 'WPCF7_VERSION' ) ) {
 			return;
 		}
@@ -110,7 +112,25 @@ final class ContactForm7Module extends AbstractModule {
 
 		$form = \WPCF7_ContactForm::get_current();
 		if ( $form ) {
-			$atts['data-gtm4wp-form-name'] = $form->title();
+			$form_name = $form->title();
+
+			// Master language (issue #145): the default-language title when a
+			// distinct master form exists.
+			if ( $this->opt( GTM4WP_OPTION_INTEGRATE_WPCF7_MASTERLANGUAGE ) ) {
+				$form_id   = (int) $form->id();
+				$master_id = DefaultLanguage::post_id( $form_id, 'wpcf7_contact_form' );
+				if ( $master_id > 0 && $master_id !== $form_id ) {
+					// The raw title, like $form->title(): the_title texturizes, so one form
+					// would report two names (#646). Not WPCF7_ContactForm::get_instance(),
+					// which replaces CF7's current form while its tags are still to render.
+					$master_title = (string) get_post_field( 'post_title', $master_id, 'raw' );
+					if ( '' !== $master_title ) {
+						$form_name = $master_title;
+					}
+				}
+			}
+
+			$atts['data-gtm4wp-form-name'] = $form_name;
 		}
 
 		return $atts;

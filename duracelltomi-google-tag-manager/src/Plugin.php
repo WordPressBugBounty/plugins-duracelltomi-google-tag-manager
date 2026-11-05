@@ -79,33 +79,80 @@ final class Plugin {
 
 		Globals::populate( $this->options );
 
-		// The settings REST endpoint must be reachable on REST requests where
-		// is_admin() is false; the controller class only loads when a REST
-		// request actually initializes.
-		//
-		// RestCors is registered in the same place and with no condition on
-		// purpose: it withdraws core's reflected cross-origin grant for the WHOLE
-		// gtm4wp/v2 namespace, and the namespace exists on every install because
-		// of the settings routes right above. Registering it from a module (as it
-		// was) tied a namespace-wide control to that module's feature flag (#97).
+		// Personal-data requests run from wp-admin, cron and WP-CLI, so this sits
+		// outside both branches below, and it is registered whatever the capture
+		// setting says: a request must find data captured while the feature was on.
+		( new Modules\GoogleDataManager\PrivacyData() )->register_hooks();
+
+		// The refund send lane runs from Action Scheduler / WP-Cron, so it sits
+		// outside both branches too; gated so an unused feature costs nothing.
+		if ( $this->options->get( GTM4WP_OPTION_GDM_SEND_REFUNDS ) ) {
+			$this->boot_refund_lane();
+		}
+
+		// EDD changes the cart and builds orders on admin-ajax too, so the
+		// cache-safe cookies and the attribution capture cannot wait for the
+		// frontend branch; self-gated.
+		Modules\EasyDigitalDownloads\VisitorCart::register_state_hooks( $this->options );
+		Modules\EasyDigitalDownloads\ReliablePurchase::register_flag_hooks( $this->options );
+		Modules\GoogleDataManager\CaptureHooks::register_for( $this->options );
+
+		// REST routes must exist on REST requests, where is_admin() is false.
+		// RestCors is registered here unconditionally on purpose: it withdraws
+		// core's reflected cross-origin grant for the WHOLE gtm4wp/v2 namespace,
+		// and registering it from a module tied that to a feature flag (#97).
 		add_action(
 			'rest_api_init',
 			function () {
 				RestCors::register();
 
 				( new Admin\RestController( $this->registry ) )->register_routes();
+
+				// Cheap to register (no option read until a route runs), so no gate.
+				$vault     = new Google\KeyVault();
+				$transport = new Google\WpTransport();
+				$tokens    = new Google\TokenService( $vault, $transport );
+				( new Modules\GoogleAuth\RestController( $vault, $tokens ) )->register_routes();
+
+				// The destinations test route reuses the token service and
+				// transport so the endpoint and scope keep single definitions.
+				( new Modules\GoogleDataManager\RestController(
+					$vault,
+					new Modules\GoogleDataManager\EventsIngest( $tokens, $transport ),
+					new Modules\GoogleDataManager\SendLog(),
+					$this->options,
+					new Modules\GoogleDataManager\DestinationHealth()
+				) )->register_routes();
+
+				// Guest-facing, so it exists only while capture runs and has a
+				// destination to capture for (#538, as CaptureHooks). Gated on the
+				// options alone: the callback resolves the platform per request.
+				if ( Modules\GoogleDataManager\GoogleDataManagerModule::capture_enabled( $this->options )
+					&& array() !== Modules\GoogleDataManager\DestinationRows::rows( $this->options ) ) {
+					( new Modules\GoogleDataManager\BackfillEndpoint() )->register_routes();
+				}
+
+				// A service account a destination row references must not be
+				// deletable; the veto is wired next to the routes it protects.
+				add_filter(
+					GTM4WP_WPFILTER_GOOGLE_SERVICE_ACCOUNT_IN_USE,
+					fn ( $in_use, $account_id ) => ( true === $in_use )
+						|| Modules\GoogleDataManager\DestinationRows::references_account( $this->options, (string) $account_id ),
+					10,
+					2
+				);
 			}
 		);
 
+		// The Abilities API surface (WordPress 6.9+): registered on every request,
+		// before the split below, because an ability runs on REST, MCP and WP-CLI
+		// requests where neither branch is taken. Two add_action() calls; the
+		// providers run only when core builds its registry.
+		( new Abilities\Registrar( $this->registry ) )->register_hooks();
+
 		if ( is_admin() ) {
-			/**
-			 * Filters the capability needed to see and manage the GTM4WP settings page.
-			 *
-			 * @since 1.20
-			 *
-			 * @param string $capability The required capability. Default 'manage_options'.
-			 */
-			if ( current_user_can( apply_filters( 'gtm4wp_admin_page_capability', 'manage_options' ) ) ) {
+			// The filter is documented in src/Capability.php.
+			if ( Capability::can_manage_settings() ) {
 				$this->boot_admin();
 			}
 
@@ -116,11 +163,8 @@ final class Plugin {
 	}
 
 	/**
-	 * Returns the module registry, or null before boot() has run.
-	 *
-	 * Nullable like frontend() below: both are built in boot(), so a caller that
-	 * runs earlier than plugins_loaded would otherwise get a TypeError from the
-	 * return type instead of a value it can test.
+	 * Returns the module registry, or null before boot() has run (a caller
+	 * earlier than plugins_loaded gets a testable value, not a TypeError).
 	 *
 	 * @return Registry|null
 	 */
@@ -135,6 +179,38 @@ final class Plugin {
 	 */
 	public function options(): ?Options {
 		return $this->options;
+	}
+
+	/**
+	 * Registers the server-side refund send lane and its status polling. Both
+	 * commerce adapters are wired unconditionally and decide for themselves
+	 * whether their platform is active (the WC/EDD parity rule).
+	 *
+	 * @return void
+	 */
+	private function boot_refund_lane(): void {
+		if ( null === $this->options ) {
+			return;
+		}
+
+		$ingest = new Modules\GoogleDataManager\EventsIngest(
+			new Google\TokenService( new Google\KeyVault(), new Google\WpTransport() ),
+			new Google\WpTransport()
+		);
+		$log    = new Modules\GoogleDataManager\SendLog();
+
+		( new Modules\GoogleDataManager\RefundSender(
+			$this->options,
+			$ingest,
+			new Modules\GoogleDataManager\DestinationHealth(),
+			$log,
+			array(
+				new Modules\GoogleDataManager\WooCommerceRefunds( $this->options ),
+				new Modules\GoogleDataManager\EddRefunds( $this->options ),
+			)
+		) )->register_hooks();
+
+		( new Modules\GoogleDataManager\StatusPoller( $ingest, $log ) )->register_hooks();
 	}
 
 	/**

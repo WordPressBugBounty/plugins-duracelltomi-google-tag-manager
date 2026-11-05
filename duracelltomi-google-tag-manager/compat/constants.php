@@ -7,9 +7,9 @@
  * third party plugins and themes use them to read plugin options and to hook
  * into the data layer. All values must stay unchanged forever.
  *
- * Constants of features removed in 2.0 (WP e-Commerce, weather and geo data,
- * scroll tracking) are also kept so that third party code referencing them
- * does not fatal.
+ * Constants of removed features (2.0: WP e-Commerce, weather and geo data,
+ * scroll tracking; 2.1: WebToffee GDPR, YouTube events) are also kept so that
+ * third party code referencing them does not fatal.
  *
  * @package GTM4WP
  * @author Thomas Geiger
@@ -60,19 +60,11 @@ define( 'GTM4WP_OPTION_INCLUDE_POSTCOUNT', 'include-postcount' );
 define( 'GTM4WP_OPTION_INCLUDE_POSTID', 'include-postid' );
 define( 'GTM4WP_OPTION_INCLUDE_POSTFORMAT', 'include-postformat' );
 define( 'GTM4WP_OPTION_INCLUDE_POSTTERMLIST', 'include-postterms' );
-/**
- * Split out of GTM4WP_OPTION_INCLUDE_POSTTERMLIST in 2.0: that single option used to
- * emit BOTH the taxonomy terms and every non-underscore-prefixed post meta value, while
- * describing only the former. The meta half now has its own opt-in; Migration seeds it
- * from the legacy option so an upgrading site keeps the data it was already sending.
- */
+// Split out of GTM4WP_OPTION_INCLUDE_POSTTERMLIST in 2.0 (that option emitted
+// BOTH terms and post meta); Migration seeds it from the legacy option.
 define( 'GTM4WP_OPTION_INCLUDE_POSTMETA', 'include-postmeta' );
-/**
- * Optional allow-list for the option above: a newline separated list of meta keys.
- * While it is empty (the default) every non-protected key is published, exactly as
- * in 1.x - so neither the 2.0 split nor its migration seeding can change what an
- * upgrading site already sends. Filling it in narrows the dump to the named keys.
- */
+// Optional allow-list of meta keys for the option above; empty (the default)
+// publishes every non-protected key, exactly as in 1.x.
 define( 'GTM4WP_OPTION_INCLUDE_POSTMETA_KEYS', 'include-postmeta-keys' );
 define( 'GTM4WP_OPTION_INCLUDE_SEARCHDATA', 'include-searchdata' );
 define( 'GTM4WP_OPTION_INCLUDE_BROWSERDATA', 'include-browserdata' );
@@ -94,16 +86,20 @@ define( 'GTM4WP_OPTION_INCLUDE_POSTSTICKY', 'include-post-sticky' );
 define( 'GTM4WP_OPTION_INCLUDE_PRIMARYCATEGORY', 'include-primary-category' );
 define( 'GTM4WP_OPTION_INCLUDE_PAGELANGUAGE', 'include-page-language' );
 define( 'GTM4WP_OPTION_INCLUDE_PARENTCATEGORIES', 'include-parent-categories' );
+define( 'GTM4WP_OPTION_INCLUDE_MASTERLANGUAGE', 'include-master-language' );
 
 // New in 2.0: cache-safe data layer master switch. When on, visitor/session
 // specific values are not rendered into the (cacheable) page HTML; the browser
 // pushes what it can itself (referrer, search) as a gtm4wp.visitorData event.
 define( 'GTM4WP_OPTION_CACHE_SAFE_DATALAYER', 'cache-safe-datalayer' );
 
+// Live: the Cloudflare country code page variable (PageVariables module). Not
+// part of the removed geo/weather set below, despite the shared prefix.
+define( 'GTM4WP_OPTION_INCLUDE_MISCGEOCF', 'include-miscgeo-cloudflare' );
+
 // Removed in 2.0: geo and weather data. Constants kept for third party compatibility.
 define( 'GTM4WP_OPTION_INCLUDE_MISCGEO', 'include-miscgeo' );
 define( 'GTM4WP_OPTION_INCLUDE_MISCGEOAPI', 'geo-apikey' );
-define( 'GTM4WP_OPTION_INCLUDE_MISCGEOCF', 'include-miscgeo-cloudflare' );
 define( 'GTM4WP_OPTION_INCLUDE_WEATHER', 'include-weather' );
 define( 'GTM4WP_OPTION_INCLUDE_WEATHERUNITS', 'weather-weatherunits' );
 define( 'GTM4WP_OPTION_INCLUDE_WEATHEROWMAPI', 'weather-openweathermap-apikey' );
@@ -113,7 +109,9 @@ define( 'GTM4WP_OPTION_EVENTS_FORMMOVE_FILLEDONLY', 'event-form-move-filled-only
 define( 'GTM4WP_OPTION_EVENTS_NEWUSERREG', 'event-new-user-registration' );
 define( 'GTM4WP_OPTION_EVENTS_USERLOGIN', 'event-user-logged-in' );
 
+// Removed in 2.1: YouTube tracker (use GTM's native YouTube Video trigger). Constant kept for third party compatibility.
 define( 'GTM4WP_OPTION_EVENTS_YOUTUBE', 'event-youtube' );
+
 define( 'GTM4WP_OPTION_EVENTS_VIMEO', 'event-vimeo' );
 define( 'GTM4WP_OPTION_EVENTS_SOUNDCLOUD', 'event-soundcloud' );
 define( 'GTM4WP_OPTION_EVENTS_HTML5MEDIA', 'event-html5-media' );
@@ -145,6 +143,7 @@ define( 'GTM4WP_OPTION_BLACKLIST_STATUS', 'blacklist-status' );
 define( 'GTM4WP_OPTION_INTEGRATE_WPCF7', 'integrate-wpcf7' );
 define( 'GTM4WP_OPTION_INTEGRATE_WPCF7_INPUTS', 'integrate-wpcf7-inputs' );
 define( 'GTM4WP_OPTION_INTEGRATE_WPCF7_GA4EVENTS', 'integrate-wpcf7-ga4events' );
+define( 'GTM4WP_OPTION_INTEGRATE_WPCF7_MASTERLANGUAGE', 'integrate-wpcf7-master-language' );
 
 define( 'GTM4WP_OPTION_INTEGRATE_WCTRACKECOMMERCE', 'integrate-woocommerce-track-enhanced-ecommerce' );
 define( 'GTM4WP_OPTION_INTEGRATE_WCPRODPERIMPRESSION', 'integrate-woocommerce-product-per-impression' );
@@ -169,6 +168,34 @@ define( 'GTM4WP_OPTION_INTEGRATE_WCPURCHASEONANYPAGE', 'integrate-woocommerce-pu
 define( 'GTM4WP_OPTION_INTEGRATE_WCCUSTOMORDERRECEIVEDPAGE', 'integrate-woocommerce-custom-order-received-page' );
 define( 'GTM4WP_OPTION_INTEGRATE_WCLISTATTRIBUTION', 'integrate-woocommerce-persist-list-attribution' );
 define( 'GTM4WP_OPTION_INTEGRATE_WC_CHECKOUTWC', 'integrate-woocommerce-checkoutwc' );
+define( 'GTM4WP_OPTION_INTEGRATE_WCMASTERLANGUAGE', 'integrate-woocommerce-master-language' );
+
+// Easy Digital Downloads integration (new in 2.1, EDD 3.0+).
+define( 'GTM4WP_OPTION_INTEGRATE_EDDTRACKECOMMERCE', 'integrate-edd-track-ecommerce' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDPRODPERIMPRESSION', 'integrate-edd-product-per-impression' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDINCLUDECARTINDL', 'integrate-edd-cart-content-in-datalayer' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDBRANDTAXONOMY', 'integrate-edd-brand-taxonomy' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDBUSINESSVERTICAL', 'integrate-edd-business-vertical' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDUSESKU', 'integrate-edd-use-sku' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDUSEFULLCATEGORYPATH', 'integrate-edd-use-full-category-path' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDMASTERLANGUAGE', 'integrate-edd-master-language' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDPRODIDPREFIX', 'integrate-edd-product-id-prefix' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDCUSTOMERDATA', 'integrate-edd-customer-data' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDORDERDATA', 'integrate-edd-order-data' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDORDERMAXAGE', 'integrate-edd-order-max-age' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDEXCLUDETAX', 'integrate-edd-exclude-tax' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDNOORDERTRACKEDFLAG', 'integrate-edd-do-not-use-order-tracked-flag' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDCLEARECOMMERCEDL', 'integrate-edd-clear-ecommerce-datalayer' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDDLMAXTIMEOUT', 'integrate-edd-datalayer-max-timeout' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDTRANSACTIONIDPREFIX', 'integrate-edd-transaction-id-prefix' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDPURCHASESTATUSES', 'integrate-edd-purchase-track-statuses' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDTRACKONANYPAGE', 'integrate-edd-purchase-track-on-any-page' );
+define( 'GTM4WP_OPTION_INTEGRATE_EDDLISTATTRIBUTION', 'integrate-edd-persist-list-attribution' );
+
+// Google Data Manager API integration (new in 2.1).
+define( 'GTM4WP_OPTION_GDM_DESTINATIONS', 'gdm-destinations' );
+define( 'GTM4WP_OPTION_GDM_CONSENT_POLICY', 'gdm-consent-policy' );
+define( 'GTM4WP_OPTION_GDM_SEND_REFUNDS', 'gdm-send-refunds' );
 
 // Removed in 2.0: WP e-Commerce integration. Constant kept for third party compatibility.
 define( 'GTM4WP_OPTION_INTEGRATE_WPECOMMERCE', 'integrate-wp-e-commerce' );
@@ -177,6 +204,7 @@ define( 'GTM4WP_OPTION_INTEGRATE_AMPID', 'integrate-amp-id' );
 
 define( 'GTM4WP_OPTION_INTEGRATE_COOKIEBOT', 'integrate-cookiebot' );
 
+// Removed in 2.1: WebToffee GDPR Cookie Consent v2.x integration. Constant kept for third party compatibility.
 define( 'GTM4WP_OPTION_INTEGRATE_WEBTOFFEE_GDPR', 'integrate-webtoffee-gdpr' );
 
 define( 'GTM4WP_OPTION_INTEGRATE_COOKIEYES', 'integrate-cookieyes' );
@@ -219,13 +247,11 @@ define( 'GTM4WP_WPACTION_AFTER_DATALAYER', 'gtm4wp_output_after_datalayer' );
 define( 'GTM4WP_WPACTION_AFTER_CONTAINER_CODE', 'gtm4wp_after_container_code' );
 
 /**
- * Constant used by GTM4WP as a WordPress filter to decide whether the GTM
- * container code (the <head> loader and the <noscript> iframe) is output on
- * the current request. Defaults to true. Returning false from an mu-plugin or
- * wp-config snippet suppresses the container - based on the host name,
- * WP_ENVIRONMENT_TYPE or any custom condition - while the data layer stays
- * active, so a cloned/staging copy of a site does not send hits to the
- * production container without deactivating the plugin.
+ * Filter deciding whether the container code (head loader + noscript iframe)
+ * is output on the current request; default true. Return false (e.g. from an
+ * mu-plugin on a staging copy) to suppress it while the data layer stays active.
+ * Applied once per output site (head and body), so a callback runs more than
+ * once per request and must be cheap and side-effect free (#310).
  */
 define( 'GTM4WP_WPFILTER_OUTPUT_CONTAINER', 'gtm4wp_output_container' );
 
@@ -236,12 +262,9 @@ define( 'GTM4WP_WPFILTER_OUTPUT_CONTAINER', 'gtm4wp_output_container' );
 define( 'GTM4WP_WPFILTER_ADDGLOBALVARS_ARRAY', 'gtm4wp_add_global_vars_array' );
 
 /**
- * Constant used by the cache-safe data layer (issue #398) to collect the
- * "visitor-scoped" fields a module wants delivered outside the cacheable page
- * HTML. Filter callbacks receive an array and append GTM4WP\Modules\VisitorData\VisitorField
- * objects (each carrying a delivery tier). Phase 1 consumes the Tier 1 (client
- * knows it) fields to build the gtm4wp.visitorData client push; Phase 2 will
- * consume Tier 2/3 fields for the session endpoint.
+ * Filter of the cache-safe data layer (issue #398) collecting the
+ * visitor-scoped fields a module wants delivered outside the cacheable HTML:
+ * callbacks append GTM4WP\Modules\VisitorData\VisitorField objects.
  */
 define( 'GTM4WP_WPFILTER_VISITOR_SCOPED_FIELDS', 'gtm4wp_visitor_scoped_fields' );
 
@@ -270,16 +293,10 @@ define( 'GTM4WP_WPFILTER_AXEPTIO_CONSENT_MODE_DEFAULT', 'gtm4wp_axeptio_consent_
 define( 'GTM4WP_WPFILTER_EEC_PRODUCT_ARRAY', 'gtm4wp_eec_product_array' );
 
 /**
- * Source-aware successor of GTM4WP_WPFILTER_EEC_PRODUCT_ARRAY (since 2.0).
- *
- * Behaves like the deprecated gtm4wp_eec_product_array filter but receives a
- * third argument: the raw source object the GA4 item was built from - the
- * WooCommerce cart item array on the cart/checkout paths, or the WC_Order_Item
- * on the purchase path (null when there is no per-line source, e.g. a product
- * detail page or product list). This lets extensions read custom cart/order
- * item meta - which never lives on the WC_Product/variation - and attach only
- * the fields they need, instead of bloating every GA4 event with the whole
- * source array. The source object itself is never merged into the item array.
+ * Source-aware successor of GTM4WP_WPFILTER_EEC_PRODUCT_ARRAY (since 2.0): the
+ * same filter plus a third argument, the raw cart item array / WC_Order_Item
+ * the GA4 item was built from (null without a per-line source), so extensions
+ * can read custom item meta. The source is never merged into the item.
  */
 define( 'GTM4WP_WPFILTER_EEC_ITEM_WITH_SOURCE', 'gtm4wp_eec_item_with_source' );
 define( 'GTM4WP_WPFILTER_EEC_CART_ITEM', 'gtm4wp_eec_cart_item' );
@@ -288,3 +305,71 @@ define( 'GTM4WP_WPFILTER_EEC_ORDER_DATA', 'gtm4wp_eec_order_data' );
 define( 'GTM4WP_WPFILTER_EEC_ITEM_AFFILIATION', 'gtm4wp_eec_item_affiliation' );
 define( 'GTM4WP_WPFILTER_ECC_PURCHASE_DATALAYER', 'gtm4wp_purchase_datalayer' );
 define( 'GTM4WP_WPFILTER_EEC_DATALAYER_PAGELOAD', 'gtm4wp_woocommerce_datalayer_on_pageload' );
+
+/**
+ * Constants used by the Easy Digital Downloads integration (since 2.1) as
+ * WordPress filters to allow 3rd party plugins to alter e-commerce related
+ * data layer content. The store-agnostic GTM4WP_WPFILTER_EEC_ITEM_WITH_SOURCE
+ * and GTM4WP_WPFILTER_EEC_ITEM_AFFILIATION filters above run on EDD items too;
+ * these are the EDD counterparts of the WooCommerce-object-specific filters.
+ */
+define( 'GTM4WP_WPFILTER_EEC_EDD_CART_ITEM', 'gtm4wp_eec_edd_cart_item' );
+define( 'GTM4WP_WPFILTER_EEC_EDD_ORDER_ITEM', 'gtm4wp_eec_edd_order_item' );
+define( 'GTM4WP_WPFILTER_EEC_EDD_ORDER_DATA', 'gtm4wp_eec_edd_order_data' );
+define( 'GTM4WP_WPFILTER_EDD_PURCHASE_DATALAYER', 'gtm4wp_edd_purchase_datalayer' );
+define( 'GTM4WP_WPFILTER_EDD_DATALAYER_PAGELOAD', 'gtm4wp_edd_datalayer_on_pageload' );
+define( 'GTM4WP_WPFILTER_EDD_ORDER_PHONE', 'gtm4wp_edd_order_phone' );
+
+/**
+ * Filter (since 2.1) that lets any feature holding a reference to a Google
+ * service account veto its deletion on the settings screen: return true while
+ * the account id passed as the second argument is still in use.
+ */
+define( 'GTM4WP_WPFILTER_GOOGLE_SERVICE_ACCOUNT_IN_USE', 'gtm4wp_google_service_account_in_use' );
+
+/**
+ * Filter (since 2.1) over the runtime list of Google Data Manager destinations:
+ * the validated rows of the gdm-destinations option, each an array with the
+ * DestinationRows column keys. Rows added or changed here are re-validated
+ * before use; an invalid row is dropped, never sent.
+ */
+define( 'GTM4WP_WPFILTER_GDM_DESTINATIONS', 'gtm4wp_gdm_destinations' );
+
+/**
+ * Filter (since 2.1) over the consent-mode signal map captured for an order:
+ * receives the map parsed from the visitor's own consent cookie (or null when
+ * none was captured) and the order - the WC_Order object on WooCommerce, the
+ * order id (int) on Easy Digital Downloads, the same type whether the map
+ * arrives at order creation or from the receipt-page backfill - and returns the
+ * map to store. The escape hatch for consent tools that keep the choice
+ * entirely inside the GTM container, where the page carries no reflection of
+ * it.
+ */
+define( 'GTM4WP_WPFILTER_GDM_ORDER_CONSENT', 'gtm4wp_gdm_order_consent' );
+
+/**
+ * Filter (since 2.1) over one assembled Data Manager refund event: receives the
+ * event array exactly as it would be sent, together with the platform's refund
+ * object and the order it belongs to. Returning an empty array (or anything
+ * that is not an array) cancels the send for that refund, which is the
+ * documented veto; anything else is validated the same way the built-in
+ * assembly is before it leaves the site.
+ */
+define( 'GTM4WP_WPFILTER_GDM_REFUND_EVENT', 'gtm4wp_gdm_refund_event' );
+
+/**
+ * Filter deciding whether the plugin registers its abilities with the
+ * WordPress Abilities API (WordPress 6.9+); default true. Return false to
+ * hide the whole surface from every client, the WordPress MCP Adapter
+ * included. The abilities are gated on the settings capability in any case;
+ * this is for a site that wants no AI-agent surface at all.
+ */
+define( 'GTM4WP_WPFILTER_ABILITIES_ENABLED', 'gtm4wp_abilities_enabled' );
+
+/**
+ * Filter deciding whether the plugin's abilities may change anything; default
+ * true. Return false to keep the surface read-only: the abilities that read
+ * the status, the settings and the logs stay, the ones that change settings
+ * or contact Google are not registered and refuse to run.
+ */
+define( 'GTM4WP_WPFILTER_ABILITIES_ALLOW_WRITE', 'gtm4wp_abilities_allow_write' );

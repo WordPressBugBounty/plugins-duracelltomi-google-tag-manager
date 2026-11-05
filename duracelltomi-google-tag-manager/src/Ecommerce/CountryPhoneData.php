@@ -4,7 +4,7 @@
  *
  * Regenerate with: composer generate:phone-table
  * Source: Google libphonenumber, resources/PhoneNumberMetadata.xml
- * Generated: 2026-08-12
+ * Generated: 2026-11-04
  *
  * @package GTM4WP
  * @author Thomas Geiger
@@ -12,35 +12,24 @@
  * @license GNU General Public License, version 3
  */
 
-namespace GTM4WP\Modules\WooCommerce;
+namespace GTM4WP\Ecommerce;
 
 defined( 'ABSPATH' ) || exit;
 
 /**
  * Per-country dialling facts, used to turn a locally typed phone number into
- * E.164 before hashing it for Enhanced Conversions.
+ * E.164 before hashing it for Enhanced Conversions. Three columns:
  *
- * Three columns, and the third is the one that decides between two readings of
- * the same digits:
+ * 1. **Calling code**, without the "+".
+ * 2. **National (trunk) prefix, or null.** Null is NOT "unknown": the country
+ *    has no trunk prefix, so a leading zero is part of the number (101 of
+ *    245 entries; Italy is the commercially important one).
+ * 3. **General national-number pattern.** Used ONLY to choose between "a
+ *    national number" and "the international form with the + left off", never
+ *    to reject a number (UC-5); an unrecognised number falls through to the
+ *    positional rules.
  *
- * 1. **Calling code.** The country's international prefix, without the "+".
- * 2. **National (trunk) prefix, or null.** Null is NOT "unknown" - it means the
- *    country has no trunk prefix at all, so a leading zero is part of the number
- *    and must be kept. 101 of the 245 entries are null; of those, Italy
- *    is the commercially important one, because conflating "no trunk prefix"
- *    with "uses 0" made every Italian landline hash to a value Google could
- *    never match.
- * 3. **General national-number pattern.** What a number of this country looks
- *    like. Used ONLY to choose between "this is a national number" and "this is
- *    the international form with the + left off" - never to reject a number, so a
- *    stale pattern can fail to improve a number but cannot refuse one (upstream
- *    UC-5). A number it does not recognise falls through to the positional rules,
- *    which are applied uniformly across all territories - not to the behaviour
- *    that predated this column, which returned early for the ones with no trunk
- *    prefix. See tools/generate-phone-table.php for the measurement behind that.
- *
- * See tools/generate-phone-table.php for why this is generated rather than
- * written, and what it deliberately does not model.
+ * See tools/generate-phone-table.php for what it deliberately does not model.
  */
 final class CountryPhoneData {
 
@@ -85,7 +74,7 @@ final class CountryPhoneData {
 		'BR' => array( '55', '0', '[1-467]\\d{9,10}|55[0-46-9]\\d{8}|[34]\\d{7}|55\\d{7,8}|(?:5[0-46-9]|[89]\\d)\\d{7,9}' ),
 		'BS' => array( '1', '1', '(?:242|[58]\\d\\d|900)\\d{7}' ),
 		'BT' => array( '975', null, '[178]\\d{7}|[2-8]\\d{6}' ),
-		'BW' => array( '267', null, '(?:0800|(?:[37]|800)\\d)\\d{6}|(?:[2-6]\\d|90)\\d{5}' ),
+		'BW' => array( '267', null, '90\\d{5}|(?:0800|[2-6]|(?:7|800)\\d)\\d{6}' ),
 		'BY' => array( '375', '8', '(?:[12]\\d|33|44|902)\\d{7}|8(?:0[0-79]\\d{5,7}|[1-7]\\d{9})|8(?:1[0-489]|[5-79]\\d)\\d{7}|8[1-79]\\d{6,7}|8[0-79]\\d{5}|8\\d{5}' ),
 		'BZ' => array( '501', null, '(?:0800\\d|[2-8])\\d{6}' ),
 		'CA' => array( '1', '1', '[2-9]\\d{9}|3\\d{6}' ),
@@ -118,7 +107,7 @@ final class CountryPhoneData {
 		'EG' => array( '20', '0', '[189]\\d{8,9}|[24-6]\\d{8}|[135]\\d{7}' ),
 		'EH' => array( '212', '0', '[5-8]\\d{8}' ),
 		'ER' => array( '291', '0', '[178]\\d{6}' ),
-		'ES' => array( '34', null, '(?:400|[5-9]\\d\\d)\\d{6}' ),
+		'ES' => array( '34', null, '400\\d{6}|(?:51|[6-9]\\d)\\d{7}' ),
 		'ET' => array( '251', '0', '(?:11|[2-57-9]\\d)\\d{7}' ),
 		'FI' => array( '358', '0', '[1-35689]\\d{4}|7\\d{10,11}|(?:[124-7]\\d|3[0-46-9])\\d{8}|[1-9]\\d{5,8}' ),
 		'FJ' => array( '679', null, '45\\d{5}|(?:0800\\d|[235-9])\\d{6}' ),
@@ -135,7 +124,7 @@ final class CountryPhoneData {
 		'GH' => array( '233', '0', '[235]\\d{8}|800\\d{5,6}' ),
 		'GI' => array( '350', null, '(?:[25]\\d|60)\\d{6}' ),
 		'GL' => array( '299', null, '(?:19|[2-689]\\d|70)\\d{4}' ),
-		'GM' => array( '220', null, '[2-9]\\d{6}' ),
+		'GM' => array( '220', null, '[48]\\d{8}|[2-9]\\d{6}' ),
 		'GN' => array( '224', null, '722\\d{6}|(?:3|6\\d)\\d{7}' ),
 		'GP' => array( '590', '0', '7090\\d{5}|(?:[56]9|[89]\\d)\\d{7}' ),
 		'GQ' => array( '240', null, '222\\d{6}|(?:3\\d|55|[89]0)\\d{7}' ),
@@ -246,7 +235,7 @@ final class CountryPhoneData {
 		'SD' => array( '249', '0', '[19]\\d{8}' ),
 		'SE' => array( '46', '0', '(?:[26]\\d\\d|9)\\d{9}|[1-9]\\d{8}|[1-689]\\d{7}|[1-4689]\\d{6}|2\\d{5}' ),
 		'SG' => array( '65', null, '(?:(?:1\\d|8)\\d\\d|7000)\\d{7}|[3689]\\d{7}' ),
-		'SH' => array( '290', null, '(?:[256]\\d|8)\\d{3}' ),
+		'SH' => array( '290', null, '(?:[2569]\\d|8)\\d{3}' ),
 		'SI' => array( '386', '0', '[1-7]\\d{7}|8\\d{4,7}|90\\d{4,6}' ),
 		'SJ' => array( '47', null, '0\\d{4}|(?:[489]\\d|79)\\d{6}' ),
 		'SK' => array( '421', '0', '[2-689]\\d{8}|[2-59]\\d{6}|[2-5]\\d{5}' ),
@@ -296,7 +285,7 @@ final class CountryPhoneData {
 		'YT' => array( '262', '0', '(?:639\\d|7093)\\d{5}|(?:26|80|9\\d)\\d{7}' ),
 		'ZA' => array( '27', '0', '[1-79]\\d{8}|8\\d{4,9}' ),
 		'ZM' => array( '260', '0', '800\\d{6}|(?:21|[579]\\d|63)\\d{7}' ),
-		'ZW' => array( '263', '0', '2(?:[0-57-9]\\d{6,8}|6[0-24-9]\\d{6,7})|[38]\\d{9}|[35-8]\\d{8}|[3-6]\\d{7}|[1-689]\\d{6}|[1-3569]\\d{5}|[1356]\\d{4}' ),
+		'ZW' => array( '263', '0', '(?:13|8\\d{4})\\d{5}|[235-8]\\d{8}|[23568]\\d{6}' ),
 	);
 
 	/**

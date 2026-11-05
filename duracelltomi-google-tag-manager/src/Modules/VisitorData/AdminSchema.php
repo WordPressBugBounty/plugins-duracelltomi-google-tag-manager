@@ -10,16 +10,19 @@
 
 namespace GTM4WP\Modules\VisitorData;
 
+use GTM4WP\Admin\SiteHealthRows;
 use GTM4WP\Module\AdminSchemaInterface;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\SiteHealthInfoInterface;
 use GTM4WP\Options\Field;
+use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
 
 /**
  * Field definitions of the cache-safe data layer module.
  */
-final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface {
+final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface, SiteHealthInfoInterface {
 
 	/**
 	 * Documentation page of this module on gtm4wp.com. The cache-safe mode is
@@ -78,7 +81,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Enable cache-safe data layer', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Enable this if your site uses full-page caching and you want to avoid leaking one visitor\'s data (IP, logged-in user email/username/role, WooCommerce customer and cart) to another visitor through the cached HTML. When on, these visitor/session values are kept out of the cached HTML and delivered in the browser instead, under the same data layer variable names, so your Google Tag Manager tags keep working: the referrer and search term are computed by the browser itself; the visitor IP, Cloudflare country and logged-in user data come from a first-party endpoint that returns only the current visitor\'s own data (the IP/country fetched once per session, the user data only when the login state changes, so anonymous visitors never fetch it); and the WooCommerce customer and cart ride WooCommerce\'s own cart-refresh request, adding no extra page request. Because the values now arrive after the page view, point the tags that read them at the matching Custom Event trigger: gtm4wp.visitorData for the visitor and logged-in user variables, gtm4wp.customerData for the WooCommerce customer variables and gtm4wp.cartData for the cart content. Each of the three fires only when its own data changed, and only when you have the option that produces it enabled. The two WooCommerce one-shot events (an add_to_cart after the cart "Undo" and the reliable-purchase fallback) are delivered client-side too, each fired exactly once. Off by default.', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Keeps visitor-specific values (IP, logged-in user, store customer and cart) out of cached HTML and delivers them in the browser under the same variable names. Fire the tags that read them on the gtm4wp.visitorData, gtm4wp.customerData and gtm4wp.cartData events.', 'duracelltomi-google-tag-manager' ),
 				group: 'general',
 				phase: Field::PHASE_EXPERIMENTAL,
 				doc: self::DOC_PAGE
@@ -93,5 +96,20 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	 */
 	public function unavailable_message(): string {
 		return '';
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function site_health_info( Options $options ): array {
+		return array(
+			'cache_safe_datalayer' => SiteHealthRows::on_off(
+				__( 'Cache-safe data layer', 'duracelltomi-google-tag-manager' ),
+				(bool) $options->get( GTM4WP_OPTION_CACHE_SAFE_DATALAYER )
+			),
+		);
 	}
 }

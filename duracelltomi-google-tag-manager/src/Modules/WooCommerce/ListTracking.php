@@ -21,20 +21,24 @@ defined( 'ABSPATH' ) || exit;
  * add_to_cart and remove_from_cart events.
  *
  * Port of the product list related functions of integration/woocommerce.php
- * from 1.x. The list state globals ($gtm4wp_product_counter,
- * $gtm4wp_last_widget_title, $gtm4wp_grouped_product_ix,
- * $gtm4wp_cart_item_proddata) are kept for third party compatibility.
+ * from 1.x. The list state globals $gtm4wp_grouped_product_ix and
+ * $gtm4wp_cart_item_proddata are kept for third party compatibility;
+ * $gtm4wp_product_counter is only seeded (0) since the widget tracking it
+ * counted was removed, so a 1.x reader finds it set but inert (#354).
  */
 final class ListTracking {
 
 	/**
-	 * Keys of the product lists the plugin names itself.
-	 *
-	 * Every key resolves through list_identity() to a translated GA4
-	 * item_list_name and a locale-independent item_list_id. One key per list
-	 * rather than one per rendering path, so a list rendered by a shortcode, by a
-	 * Product Collection block and by WooCommerce's legacy grid block all report
-	 * the same identity and GA4 does not see three lists.
+	 * Variation-data key the tracker reads before display_price (#531); the
+	 * same literal is in js/frontend/gtm4wp-woocommerce.js.
+	 */
+	public const VARIATION_BASIS_PRICE_KEY = 'gtm4wp_price';
+
+	/**
+	 * Keys of the product lists the plugin names itself; list_identity() resolves
+	 * each to a translated item_list_name and a locale-independent item_list_id.
+	 * One key per list, not per rendering path, so a shortcode, a Product
+	 * Collection block and a legacy grid block report the same identity.
 	 */
 	private const LIST_GENERAL      = 'general';
 	private const LIST_SEARCH       = 'search';
@@ -66,23 +70,44 @@ final class ListTracking {
 		private ProductData $product_data
 	) {
 		$GLOBALS['gtm4wp_product_counter']    = 0;
-		$GLOBALS['gtm4wp_last_widget_title']  = 'Sidebar Products';
 		$GLOBALS['gtm4wp_grouped_product_ix'] = 1;
 		$GLOBALS['gtm4wp_cart_item_proddata'] = '';
 	}
 
 	/**
-	 * Executed with the woocommerce_after_add_to_cart_button hook.
-	 * Outputs a hidden span element carrying the product data of the currently
-	 * shown product in a data attribute.
+	 * Adds the variation's price on the purchase basis to the data the variation
+	 * form passes to found_variation, under VARIATION_BASIS_PRICE_KEY, wherever it
+	 * differs from WooCommerce's display_price (shop display setting): "Exclude
+	 * tax" on with the shop showing prices with tax (#531, U194). Hooked to
+	 * woocommerce_available_variation, which passes three arguments.
 	 *
-	 * A span, never an input or any other form element: WooCommerce's blockified
-	 * Add to Cart + Options block scans the buffered output of this hook with
-	 * has_form_elements() and falls back to a classic full-page POST form when it
-	 * finds one, which disables the interactive add to cart on block themes (#462).
-	 * The class differs from the .gtm4wp_productdata list markup on purpose - that
-	 * class is swept page-wide into view_item_list impressions, which a product
-	 * detail page must not join.
+	 * @param mixed $data      The variation data.
+	 * @param mixed $product   The variable product.
+	 * @param mixed $variation The variation.
+	 * @return mixed
+	 */
+	public function add_basis_price_to_variation( $data, $product = null, $variation = null ) {
+		if ( ! is_array( $data ) || ! $variation instanceof \WC_Product || ! function_exists( 'wc_get_price_excluding_tax' ) ) {
+			return $data;
+		}
+
+		$include_tax = $this->product_data->item_prices_include_tax();
+
+		if ( ProductData::shop_displays_prices_incl_tax() === $include_tax ) {
+			return $data;
+		}
+
+		$data[ self::VARIATION_BASIS_PRICE_KEY ] = (float) ( $include_tax ? wc_get_price_including_tax( $variation ) : wc_get_price_excluding_tax( $variation ) );
+
+		return $data;
+	}
+
+	/**
+	 * Executed with the woocommerce_after_add_to_cart_button hook. Outputs a hidden
+	 * span carrying the product data of the shown product. A span, never a form
+	 * element: the blockified Add to Cart + Options block falls back to a classic
+	 * POST form when has_form_elements() finds one (#462). The class differs from
+	 * .gtm4wp_productdata on purpose, which is swept into view_item_list.
 	 *
 	 * @return void
 	 */
@@ -100,17 +125,18 @@ final class ListTracking {
 			'addtocartsingle'
 		);
 
+		if ( ! \GTM4WP\Ecommerce\Helpers::is_item( $eec_product_array ) ) {
+			return;
+		}
+
 		echo '<span class="gtm4wp_single_productdata" style="display:none; visibility:hidden;" data-gtm4wp_product_data="' . esc_attr( wp_json_encode( $eec_product_array ) ) . '"></span>' . "\n";
 	}
 
 	/**
-	 * Executed during woocommerce_loop_add_to_cart_link.
-	 * Attaches GA4 product data to a standalone add-to-cart button - the
-	 * [add_to_cart] shortcode and similar buttons rendered outside a product loop,
-	 * which get no .gtm4wp_productdata list markup - so the frontend click handler
-	 * can still fire add_to_cart for them (#110). Buttons inside a product loop
-	 * already carry that markup (added on woocommerce_after_shop_loop_item), so they
-	 * are skipped here to avoid duplicating the data.
+	 * Executed during woocommerce_loop_add_to_cart_link. Attaches product data to a
+	 * standalone add-to-cart button (the [add_to_cart] shortcode etc.) so the click
+	 * handler can fire add_to_cart (#110); buttons inside a product loop already
+	 * carry the list markup and are skipped.
 	 *
 	 * @param string $link    The add-to-cart link/button HTML.
 	 * @param mixed  $product The WooCommerce product this button belongs to.
@@ -138,7 +164,7 @@ final class ListTracking {
 			'shortcodeaddtocart'
 		);
 
-		if ( ! is_array( $eec_product_array ) ) {
+		if ( ! \GTM4WP\Ecommerce\Helpers::is_item( $eec_product_array ) ) {
 			return $link;
 		}
 
@@ -155,19 +181,25 @@ final class ListTracking {
 	 * when the cart item is rendered.
 	 *
 	 * @param \WC_Product          $product   A WooCommerce product that is shown in the cart.
-	 * @param array<string, mixed> $cart_item The cart item; its already-calculated line
-	 *                                        totals supply the price so process_product()
-	 *                                        does not recompute wc_get_price_to_display()
-	 *                                        once per cart item (#436).
+	 * @param array<string, mixed> $cart_item The cart item; its line totals supply the price (#436).
 	 * @return \WC_Product The unchanged product.
 	 */
 	public function cart_item_product_filter( $product, $cart_item = array() ) {
+		// Cleared, not skipped: the next remove link must not carry the
+		// previous row's data (#417).
+		if ( is_array( $cart_item ) && array() !== $cart_item && ! apply_filters( GTM4WP_WPFILTER_EEC_CART_ITEM, true, $cart_item ) ) {
+			$GLOBALS['gtm4wp_cart_item_proddata'] = '';
+
+			return $product;
+		}
+
 		$attributes = array(
-			'productlink' => apply_filters( 'the_permalink', get_permalink(), 0 ),
+			// The product's own link; the bare get_permalink() of 1.x gave the cart page.
+			'productlink' => apply_filters( 'the_permalink', $product instanceof \WC_Product ? $product->get_permalink() : '', 0 ),
 		);
 
 		if ( is_array( $cart_item ) ) {
-			$include_tax = ( 'incl' === get_option( 'woocommerce_tax_display_shop' ) );
+			$include_tax = $this->product_data->item_prices_include_tax();
 
 			$price = Helpers::cart_line_display_price( $cart_item, $include_tax );
 			if ( null !== $price ) {
@@ -202,7 +234,7 @@ final class ListTracking {
 			return $remove_from_cart_link;
 		}
 
-		if ( ! is_array( $gtm4wp_cart_item_proddata ) ) {
+		if ( ! \GTM4WP\Ecommerce\Helpers::is_item( $gtm4wp_cart_item_proddata ) ) {
 			return $remove_from_cart_link;
 		}
 
@@ -244,12 +276,17 @@ final class ListTracking {
 
 		$woo = WC();
 
+		// Restored into the cart already, so the line can be asked (#417).
+		$line = ( $woo && isset( $woo->cart ) && is_object( $woo->cart ) ) ? $woo->cart->get_cart_item( $cart_item_key ) : array();
+		if ( is_array( $line ) && array() !== $line && ! apply_filters( GTM4WP_WPFILTER_EEC_CART_ITEM, true, $line ) ) {
+			return;
+		}
+
 		if ( $woo && $woo->session ) {
 			$woo->session->set( 'gtm4wp_product_readded_to_cart', $cart_item_key );
 
-			// Cache-safe data layer (issue #398, Phase 3): flag that a one-shot event
-			// (this add_to_cart) is pending so the client fetches it on the next page.
-			// No-op unless the cache-safe mode is on.
+			// Cache-safe data layer (issue #398): flag the pending one-shot so the
+			// client fetches it on the next page. No-op unless the mode is on.
 			Helpers::flag_oneshot_event( (bool) $this->options->get( GTM4WP_OPTION_CACHE_SAFE_DATALAYER ) );
 		}
 	}
@@ -273,24 +310,16 @@ final class ListTracking {
 	}
 
 	/**
-	 * Resolves one of the plugin's own product lists to its GA4 identity.
+	 * Resolves one of the plugin's own product lists to its GA4 identity. The id is
+	 * a locale-independent literal, deliberately NOT sanitize_title() of the
+	 * translated name, so a multilingual store reports one id per list; each
+	 * literal is what sanitize_title() produced for the English name, so an English
+	 * store's payload is unchanged. Site-authored names (widget titles) keep
+	 * deriving their id from the name in ProductData::process_product().
 	 *
-	 * The id is a locale-independent literal, deliberately NOT sanitize_title() of
-	 * the translated name: GA4 keys its list reports on item_list_id, so a
-	 * multilingual store has to report one id per list, not one per language. Each
-	 * literal below is what sanitize_title() produced for the English name before
-	 * this became explicit, so an English store's payload is unchanged.
-	 *
-	 * Names the site owner authors - a widget title - are not listed here and keep
-	 * deriving their id from the name in ProductData::process_product(): there is
-	 * nothing stable to key those on.
-	 *
-	 * The other end of this table lives in js/frontend/gtm4wp-woocommerce.js
-	 * (gtm4wp_product_block_names), which resolves the same lists for WooCommerce's
-	 * legacy product grid blocks - the one path where the block is only identifiable
-	 * in the browser. Seven of that map's eight ids also appear here (all but
-	 * products-by-attribute, which has no Product Collection equivalent) and have to
-	 * be edited together; upstream registry row U99 carries the reminder.
+	 * The other end of this table is gtm4wp_product_block_names in
+	 * js/frontend/gtm4wp-woocommerce.js (legacy product grid blocks); edit both
+	 * together (registry row U99).
 	 *
 	 * @param string $key One of the LIST_* constants.
 	 * @return array{0: string, 1: string} The item_list_id and the translated item_list_name.
@@ -356,13 +385,10 @@ final class ListTracking {
 
 	/**
 	 * Sets the currently rendered product list impression name.
-	 *
-	 * $woocommerce_loop['listtype'] keeps holding the translated name: it is a 1.x
-	 * extension point third party code reads and writes. The stable id travels
-	 * beside it under our own key, paired with the name it belongs to - so if
-	 * something else overwrites listtype with a list of its own, after_shop_loop_item()
-	 * sees the names disagree and derives that list's id from its name instead of
-	 * handing it ours.
+	 * $woocommerce_loop['listtype'] keeps the translated name (a 1.x extension
+	 * point); the stable id travels beside it paired with its name, so when third
+	 * party code overwrites listtype, after_shop_loop_item() sees the names
+	 * disagree and derives that list's id from its name instead of handing it ours.
 	 *
 	 * @param string $key One of the LIST_* constants.
 	 * @return void
@@ -415,20 +441,6 @@ final class ListTracking {
 		$this->set_list_type( self::LIST_UPSELL );
 
 		return $arg;
-	}
-
-	/**
-	 * Executed during widget_title.
-	 * The widget title will be used to report a custom product list name into Google Analytics.
-	 *
-	 * @param string $widget_title The title of the widget being rendered.
-	 * @return string The unchanged widget title.
-	 */
-	public function widget_title_filter( $widget_title ) {
-		$GLOBALS['gtm4wp_product_counter']   = 1;
-		$GLOBALS['gtm4wp_last_widget_title'] = $widget_title . __( ' (widget)', 'duracelltomi-google-tag-manager' );
-
-		return $widget_title;
 	}
 
 	/**
@@ -491,65 +503,6 @@ final class ListTracking {
 	}
 
 	/**
-	 * Executed during woocommerce_before_template_part.
-	 * Starts output buffering in order to be able to add product data attributes to the link element
-	 * of a product list (classic) widget.
-	 *
-	 * @return void
-	 */
-	public function before_template_part(): void {
-		ob_start();
-	}
-
-	/**
-	 * Executed during woocommerce_after_template_part.
-	 * Stops output buffering and adds data attributes into the product link of
-	 * content-widget-product.php to be able to track product list impression and click actions.
-	 *
-	 * @param string $template_name The template part that is being rendered.
-	 * @return void
-	 */
-	public function after_template_part( $template_name ): void {
-		global $product;
-
-		$productitem = ob_get_contents();
-		ob_end_clean();
-
-		if ( 'content-widget-product.php' === $template_name ) {
-			$eec_product_array = $this->product_data->process_product(
-				$product,
-				array(
-					'productlink'    => apply_filters( 'the_permalink', get_permalink(), 0 ),
-					'item_list_name' => $GLOBALS['gtm4wp_last_widget_title'],
-					'index'          => $GLOBALS['gtm4wp_product_counter'],
-				),
-				'widgetproduct'
-			);
-
-			if ( ! isset( $eec_product_array['item_brand'] ) ) {
-				$eec_product_array['item_brand'] = '';
-			}
-
-			$productlink_with_data = sprintf(
-				'data-gtm4wp_product_data="%s" href="',
-				esc_attr( wp_json_encode( $eec_product_array ) )
-			);
-
-			++$GLOBALS['gtm4wp_product_counter'];
-
-			$productitem = str_replace( 'href="', $productlink_with_data, $productitem );
-		}
-
-		/*
-		$productitem is initialized as the template itself outputs a product item.
-		Therefore this can not be passed to wp_kses() as it can include eventually any HTML.
-		This filter function only adds additional attributes to the link element that points
-		to a product detail page. Attribute values are escaped above.
-		*/
-		echo $productitem; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-	}
-
-	/**
 	 * Generates a <span> element that can be used as a hidden addition to the DOM to be able to report
 	 * product list impressions and clicks on list pages like product category or tag pages.
 	 *
@@ -557,9 +510,7 @@ final class ListTracking {
 	 * @param string $listtype The name of the product list where the product is currently shown.
 	 * @param mixed  $itemix The index of the product in the product list. The first product should have the index no. 1.
 	 * @param string $permalink The link where the click should land when a user clicks on this product element.
-	 * @param string $list_id Optional. The stable GA4 item_list_id of that list. Empty (the
-	 *                        default) means derive it from the list name, which is what a
-	 *                        caller-supplied or third-party list name gets.
+	 * @param string $list_id Optional. The stable GA4 item_list_id; empty derives it from the list name.
 	 * @return string|false|void A hidden <span> element that includes all product data needed for ecommerce reporting in product lists.
 	 */
 	public function get_product_list_item_extra_tag( $product, $listtype, $itemix, $permalink, string $list_id = '' ) {
@@ -574,9 +525,7 @@ final class ListTracking {
 		if ( is_search() ) {
 			list( $list_id, $list_name ) = $this->list_identity( self::LIST_SEARCH );
 		} elseif ( '' !== $listtype ) {
-			// A caller-supplied name, so its id is whatever the caller paired with
-			// it - or nothing, for a name that came from elsewhere (a widget title,
-			// third party code writing $woocommerce_loop['listtype']).
+			// Caller-supplied name; its id is whatever the caller paired with it.
 			$list_name = $listtype;
 		} else {
 			list( $list_id, $list_name ) = $this->list_identity( self::LIST_GENERAL );
@@ -607,7 +556,7 @@ final class ListTracking {
 			'productlist'
 		);
 
-		if ( false === $eec_product_array ) {
+		if ( ! \GTM4WP\Ecommerce\Helpers::is_item( $eec_product_array ) ) {
 			return false;
 		}
 
@@ -636,9 +585,8 @@ final class ListTracking {
 		if ( isset( $woocommerce_loop['listtype'] ) && ( '' !== $woocommerce_loop['listtype'] ) ) {
 			$listtype = $woocommerce_loop['listtype'];
 
-			// Use the stable id only while it still belongs to the name in
-			// listtype: anything else has written a list name of its own there and
-			// gets its id derived from that name, not ours (see set_list_type()).
+			// Use the stable id only while it still belongs to the name in listtype
+			// (see set_list_type()).
 			$identity = $woocommerce_loop['gtm4wp_list_identity'] ?? null;
 			if ( is_array( $identity ) && isset( $identity['name'], $identity['id'] ) && $identity['name'] === $listtype ) {
 				$list_id = (string) $identity['id'];
@@ -707,11 +655,15 @@ final class ListTracking {
 				default:
 					$data_layer['productIsVariable'] = 0;
 
+					if ( ! \GTM4WP\Ecommerce\Helpers::is_item( $eec_product_array ) ) {
+						break;
+					}
+
 					$gtm4wp_currency = get_woocommerce_currency();
 
 					$data_layer['ecommerce'] = array(
 						'currency' => $gtm4wp_currency,
-						'value'    => $eec_product_array['price'],
+						'value'    => \GTM4WP\Ecommerce\Helpers::price_value( $eec_product_array ),
 						'item'     => $eec_product_array,
 					);
 			}
@@ -747,7 +699,12 @@ final class ListTracking {
 			'groupedproductlist'
 		);
 
+		// After the increment, so the rows below keep their displayed position.
 		++$GLOBALS['gtm4wp_grouped_product_ix'];
+
+		if ( ! \GTM4WP\Ecommerce\Helpers::is_item( $eec_product_array ) ) {
+			return $labelvalue;
+		}
 
 		if ( ! isset( $eec_product_array['item_brand'] ) ) {
 			$eec_product_array['item_brand'] = '';
@@ -763,20 +720,12 @@ final class ListTracking {
 	}
 
 	/**
-	 * Executed during woocommerce_blocks_product_grid_item_html.
-	 * Adds product list impression data into a product list that has been generated using the block
-	 * templates provided by WooCommerce.
-	 *
-	 * The empty list type and the index of 0 below are deliberate placeholders, not
-	 * an oversight: this WooCommerce filter carries no block context, so PHP cannot
-	 * tell a Handpicked Products grid from a Newest Products one. The grid container
-	 * does carry the block name as a wp-block-{block_name} class, so the real
-	 * identity is resolved in the browser - js/frontend/gtm4wp-woocommerce.js
-	 * overwrites all three of item_list_name, item_list_id and index from that
-	 * class. Keep the placeholder pair self-consistent (the generic list name and
-	 * the id derived from it): when the class is unknown to the tracker, that pair
-	 * is what the item reports, and a name that does not match its id would
-	 * collapse every grid on the page onto one id in GA4.
+	 * Executed during woocommerce_blocks_product_grid_item_html. Adds product list
+	 * data to WooCommerce's legacy grid blocks. The empty list type and index 0 are
+	 * deliberate placeholders: this filter carries no block context, so
+	 * gtm4wp-woocommerce.js resolves item_list_name / item_list_id / index from the
+	 * container's wp-block-{name} class. Keep the placeholder pair self-consistent
+	 * (generic name + its derived id): it is what an unknown block reports.
 	 *
 	 * @param string $content Product grid item HTML.
 	 * @param object $data Product data passed to the template.
@@ -786,26 +735,19 @@ final class ListTracking {
 	public function add_productdata_to_wc_block( $content, $data, $product ) {
 		$product_data_tag = $this->get_product_list_item_extra_tag( $product, '', 0, $data->permalink );
 
-		// $product_data_tag carries esc_attr'd JSON that may contain literal $n / \1
-		// sequences; escape them so preg_replace does not treat them as backreferences
-		// in the replacement string (the leading $0 keeps the matched <li> element).
+		// The JSON may contain literal $n / \1 sequences: escape them so preg_replace
+		// does not expand them as backreferences ($0 keeps the matched <li>).
 		$replacement = '$0' . addcslashes( (string) $product_data_tag, '\\$' );
 
 		return preg_replace( '/<li.+class=("|"[^"]+)wc-block-grid__product("|[^"]+")[^<]*>/i', $replacement, $content );
 	}
 
 	/**
-	 * Executed during render_block.
-	 * Injects the hidden product-data span into every product rendered by the
-	 * WooCommerce Product Collection block (woocommerce/product-collection). Unlike
-	 * the classic product loop, that block fires neither woocommerce_after_shop_loop_item
-	 * nor woocommerce_blocks_product_grid_item_html, so without this the frontend
-	 * tracker would have no data to report view_item_list / select_item for it.
-	 *
-	 * Each product is rendered as a <li class="wc-block-product post-{ID} ...">, so
-	 * the product id is read from the post-{ID} class and the span appended right
-	 * after the opening tag. preg_replace_callback (not a data-bearing replacement
-	 * string) keeps this free of the $n/\1 backreference hazard.
+	 * Executed during render_block. Injects the hidden product-data span into every
+	 * product of the Product Collection block, which fires neither
+	 * woocommerce_after_shop_loop_item nor woocommerce_blocks_product_grid_item_html.
+	 * The product id is read from the <li class="wc-block-product post-{ID}"> class;
+	 * preg_replace_callback keeps this free of the $n/\1 backreference hazard.
 	 *
 	 * @param string $block_content The rendered block HTML.
 	 * @param array  $block         The parsed block (blockName + attrs).
@@ -867,14 +809,10 @@ final class ListTracking {
 
 	/**
 	 * Maps a Product Collection preset (the block's "collection" attribute) to one
-	 * of the plugin's own list keys, so the block reports the same GA4 identity as
-	 * the shortcode and legacy-grid rendering of the same list.
-	 *
-	 * The 14 slugs are WooCommerce's CoreCollectionNames enum, measured 2026-08-06
-	 * against WC trunk and the 11.0.0 tag (upstream registry U26). A collection the
-	 * plugin does not know - a newly added core one, or one a third party
-	 * registered through the documented register_product_collection() API - falls
-	 * back to the generic list rather than guessing a name from the slug.
+	 * of the plugin's list keys, so the block reports the same GA4 identity as the
+	 * shortcode and legacy-grid rendering. The 14 slugs are WooCommerce's
+	 * CoreCollectionNames enum (registry row U26); an unknown collection falls back
+	 * to the generic list rather than guessing a name from the slug.
 	 *
 	 * @param string $collection The block's collection attribute (e.g. woocommerce/product-collection/on-sale).
 	 * @return string One of the LIST_* constants.
@@ -909,10 +847,8 @@ final class ListTracking {
 			case 'woocommerce/product-collection/cross-sells':
 				return self::LIST_CROSSSELL;
 
-			// The four below are the Product Collection successors of legacy grid
-			// blocks the plugin already names, so they deliberately resolve to the
-			// same list identity: a store migrating one of those blocks keeps its
-			// GA4 list history instead of starting a new list.
+			// Successors of legacy grid blocks the plugin already names; same identity
+			// so a migrating store keeps its GA4 list history.
 			case 'woocommerce/product-collection/hand-picked':
 				return self::LIST_HANDPICKED;
 

@@ -86,13 +86,8 @@ final class UserEventsModule extends AbstractModule {
 			$in_footer = (bool) apply_filters( 'gtm4wp_' . GTM4WP_OPTION_EVENTS_FORMMOVE, true );
 			$this->enqueue_script( 'gtm4wp-form-move-tracker', 'gtm4wp-form-move-tracker.js', array(), $in_footer );
 
-			// The sub-option is meaningless without its parent, and the parent is
-			// what gates the enqueue above, so the config only ever ships with the
-			// tracker it configures (the Field's depends_on is admin UX only).
-			//
-			// Declared with `var` so it really is a window property: the tracker
-			// reads it as window.gtm4wp_form_move_config, and a top-level `const`
-			// would bind lexically and never appear on window (RI-14).
+			// `var`, so it really is a window property the tracker can read as
+			// window.gtm4wp_form_move_config; a top-level `const` never is (RI-14).
 			$config = array(
 				'filledOnly' => (bool) $this->opt( GTM4WP_OPTION_EVENTS_FORMMOVE_FILLEDONLY ),
 			);
@@ -107,6 +102,11 @@ final class UserEventsModule extends AbstractModule {
 
 	/**
 	 * Sets a cookie so that the next page load can fire a GTM event after a user has been logged in.
+	 *
+	 * The Secure flag needs BOTH an https home URL and is_ssl(): the cookie is
+	 * written on the login page (TLS under FORCE_SSL_ADMIN even on an http site)
+	 * and read on the front end, so is_ssl() alone would set a flag the http
+	 * pages never send back. Deliberately unlike the other cookie writers (#214).
 	 *
 	 * @return void
 	 */
@@ -156,6 +156,14 @@ final class UserEventsModule extends AbstractModule {
 	 * @return void
 	 */
 	public function clear_event_cookies(): void {
+		// Core runs template_redirect before its HEAD exit and its robots,
+		// favicon, feed and trackback handlers, none of which prints the footer
+		// (#654); clearing there would lose the event.
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'HEAD' === $method || is_robots() || is_favicon() || is_feed() || is_trackback() ) {
+			return;
+		}
+
 		if ( array_key_exists( 'gtm4wp_user_logged_in', $_COOKIE ) ) {
 			setcookie(
 				'gtm4wp_user_logged_in',

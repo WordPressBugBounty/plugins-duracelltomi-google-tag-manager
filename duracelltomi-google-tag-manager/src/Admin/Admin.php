@@ -10,7 +10,11 @@
 
 namespace GTM4WP\Admin;
 
+use GTM4WP\Google\KeyVault;
 use GTM4WP\Module\Registry;
+use GTM4WP\Modules\GoogleAuth\KeyNotice;
+use GTM4WP\Modules\GoogleDataManager\DestinationHealth;
+use GTM4WP\Modules\GoogleDataManager\HealthNotice;
 use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
@@ -37,10 +41,14 @@ final class Admin {
 	 * @return void
 	 */
 	public function boot(): void {
-		$rest = new RestController( $this->registry );
-
-		( new SettingsPage( $this->registry, $rest ) )->register_hooks();
+		// The routes themselves are registered by Plugin on rest_api_init; the
+		// screen only needs the store the routes read and write through.
+		( new SettingsPage( $this->registry, new SettingsStore( $this->registry ) ) )->register_hooks();
 		( new Notices( $this->options ) )->register_hooks();
+		( new KeyNotice( new KeyVault() ) )->register_hooks();
+		( new HealthNotice( $this->options, new DestinationHealth() ) )->register_hooks();
+		( new SiteHealthTests( $this->registry, $this->options ) )->register_hooks();
+		( new SiteHealthInfo( $this->registry, $this->options ) )->register_hooks();
 		( new PluginRow() )->register_hooks();
 	}
 }

@@ -13,18 +13,11 @@ namespace GTM4WP\Modules\WooCommerce;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Exposes the plugin's GA4 ecommerce item array on the WooCommerce Store API
- * so the React-based Cart & Checkout blocks carry the exact same product data
- * the classic (server-rendered) path builds.
- *
- * Every product and cart-item the block UI fetches gains a
- * `extensions.gtm4wp.item` field, read by the gtm4wp-woocommerce-blocks tracker
- * to fire add_to_cart / remove_from_cart / add_shipping_info / add_payment_info
- * from the block data stores (which never fire the classic jQuery events).
- *
- * The item price comes from ProductData::process_product() as a real float, so
- * the block tracker never has to divide minor units and stays correct for
- * zero-decimal (JPY) and 3-decimal currencies.
+ * Exposes the GA4 item array on the WooCommerce Store API as
+ * `extensions.gtm4wp.item` on every product and cart item, so the
+ * gtm4wp-woocommerce-blocks tracker fires the block events with the same
+ * product data as the classic path. The price is a real float from
+ * ProductData::process_product(), so the tracker never divides minor units.
  */
 final class StoreApiData {
 
@@ -97,7 +90,7 @@ final class StoreApiData {
 		$item = $this->product_data->process_product( $product, array(), 'block' );
 
 		return array(
-			'item' => ( false === $item ) ? null : $item,
+			'item' => \GTM4WP\Ecommerce\Helpers::is_item( $item ) ? $item : null,
 		);
 	}
 
@@ -110,6 +103,11 @@ final class StoreApiData {
 	 * @return array<string, string>
 	 */
 	public function extend_cart_item_data( $cart_item ): array {
+		// An excluded line carries no item, and the block tracker drops it (#417).
+		if ( is_array( $cart_item ) && ! apply_filters( GTM4WP_WPFILTER_EEC_CART_ITEM, true, $cart_item ) ) {
+			return array( 'item' => '' );
+		}
+
 		$product  = is_array( $cart_item ) && isset( $cart_item['data'] ) ? $cart_item['data'] : null;
 		$quantity = is_array( $cart_item ) && isset( $cart_item['quantity'] ) ? $cart_item['quantity'] : 1;
 
@@ -121,7 +119,7 @@ final class StoreApiData {
 		);
 
 		return array(
-			'item' => ( false === $item ) ? '' : (string) wp_json_encode( $item ),
+			'item' => \GTM4WP\Ecommerce\Helpers::is_item( $item ) ? (string) wp_json_encode( $item ) : '',
 		);
 	}
 

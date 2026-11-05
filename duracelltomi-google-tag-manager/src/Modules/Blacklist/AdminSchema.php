@@ -10,9 +10,14 @@
 
 namespace GTM4WP\Modules\Blacklist;
 
+use GTM4WP\Admin\SettingsPage;
+use GTM4WP\Admin\SiteHealthRows;
 use GTM4WP\Module\AdminSchemaInterface;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\SiteHealthInfoInterface;
+use GTM4WP\Module\SiteHealthTestsInterface;
 use GTM4WP\Options\Field;
+use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -25,7 +30,7 @@ defined( 'ABSPATH' ) || exit;
  * Vendor names are product names and are not translated, matching 1.x
  * behavior.
  */
-final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface {
+final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface, SiteHealthInfoInterface, SiteHealthTestsInterface {
 
 	/**
 	 * Documentation page of this module on gtm4wp.com. Both options deep link
@@ -218,18 +223,9 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	}
 
 	/**
-	 * Field definitions.
-	 *
-	 * Every selected entity - tag, trigger, variable and group class alike -
-	 * is stored in the single 1.x compatible blacklist-status option. The
-	 * four entity types are a presentation concern only: the multiselect
-	 * declares them as choice sections, so the admin UI renders four labelled
-	 * lists while the stored value stays one flat list.
-	 *
-	 * The section id lists are derived from the same four label tables that
-	 * build the choices, so an entity can never be labelled in one place and
-	 * sorted in another. BlacklistAdminSchemaTest pins that the sections cover
-	 * every choice exactly once.
+	 * Field definitions. Every entity type is stored in the single 1.x
+	 * blacklist-status option; the four types are choice sections (presentation
+	 * only), derived from the same label tables that build the choices.
 	 *
 	 * @return Field[]
 	 */
@@ -244,10 +240,8 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				label: __( 'Restriction mode', 'duracelltomi-google-tag-manager' ),
 				description: esc_html__( 'Select whether the checked entities below should be blocklisted (blocked) or allowlisted (everything else blocked).', 'duracelltomi-google-tag-manager' ),
 				group: 'mode',
-				// The stored VALUES are part of the contract: 1 is blocklist mode
-				// in BlacklistModule::add_datalayer_data(). Only the labels moved
-				// to Google's current wording - renumbering these would silently
-				// invert the restriction mode of every site that already saved one.
+				// The stored VALUES are the contract (1 = blocklist mode in
+				// BlacklistModule); renumbering would invert every saved restriction.
 				choices: array(
 					'0' => __( 'Disabled', 'duracelltomi-google-tag-manager' ),
 					'1' => __( 'Blocklist selected entities', 'duracelltomi-google-tag-manager' ),
@@ -315,5 +309,69 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	 */
 	public function unavailable_message(): string {
 		return '';
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * The mode and a count of the entries that survive the same re-validation
+	 * the data layer applies.
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function site_health_info( Options $options ): array {
+		$modes = array(
+			1 => 'blocklist',
+			2 => 'allowlist',
+		);
+		$mode  = $modes[ (int) $options->get( GTM4WP_OPTION_BLACKLIST_ENABLE ) ] ?? 'disabled';
+
+		$valid = count( BlacklistModule::restriction_items( $options->get( GTM4WP_OPTION_BLACKLIST_STATUS ) ) );
+
+		return array(
+			'mode'         => SiteHealthRows::text( __( 'Tag restrictions', 'duracelltomi-google-tag-manager' ), SiteHealthRows::word( $mode ), $mode ),
+			'restrictions' => SiteHealthRows::count( __( 'Restricted entities', 'duracelltomi-google-tag-manager' ), $valid ),
+		);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * Allowlist mode only: an allowlist that no stored entry survives blocks
+	 * every tag in the container, which may be meant but is never obvious (#344).
+	 * The data layer keeps emitting the empty list: omitting it would fail open.
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, callable>
+	 */
+	public function site_health_tests( Options $options ): array {
+		if ( 2 !== (int) $options->get( GTM4WP_OPTION_BLACKLIST_ENABLE ) ) {
+			return array();
+		}
+
+		return array(
+			'allowlist' => static function () use ( $options ): array {
+				if ( array() !== BlacklistModule::restriction_items( $options->get( GTM4WP_OPTION_BLACKLIST_STATUS ) ) ) {
+					return array(
+						'status'      => 'good',
+						'label'       => __( 'The Google Tag Manager allowlist permits at least one entity', 'duracelltomi-google-tag-manager' ),
+						'description' => '<p>' . esc_html__( 'Tag restrictions are in allowlist mode and at least one listed tag, trigger or variable type is allowed.', 'duracelltomi-google-tag-manager' ) . '</p>',
+						'actions'     => '',
+					);
+				}
+
+				return array(
+					'status'      => 'recommended',
+					'label'       => __( 'The Google Tag Manager allowlist blocks every tag', 'duracelltomi-google-tag-manager' ),
+					'description' => '<p>' . esc_html__( 'Tag restrictions are in allowlist mode, but no entity is allowed, so Google Tag Manager blocks every tag, trigger and variable in your container. If this is not intended, select the entities to allow or switch the restrictions off.', 'duracelltomi-google-tag-manager' ) . '</p>',
+					'actions'     => sprintf(
+						'<p><a href="%1$s">%2$s</a></p>',
+						esc_url( SettingsPage::url( GTM4WP_OPTION_BLACKLIST_STATUS ) ),
+						esc_html__( 'Open the tag restrictions', 'duracelltomi-google-tag-manager' )
+					),
+				);
+			},
+		);
 	}
 }

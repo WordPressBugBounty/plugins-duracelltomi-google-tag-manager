@@ -10,9 +10,14 @@
 
 namespace GTM4WP\Modules\WooCommerce;
 
+use GTM4WP\Admin\SiteHealthRows;
+use GTM4WP\Frontend\DefaultLanguage;
 use GTM4WP\Module\AdminSchemaInterface;
 use GTM4WP\Module\DocumentedSchemaInterface;
+use GTM4WP\Module\SiteHealthInfoInterface;
+use GTM4WP\Module\StatusInfoInterface;
 use GTM4WP\Options\Field;
+use GTM4WP\Options\Options;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -20,7 +25,7 @@ defined( 'ABSPATH' ) || exit;
  * Field definitions of the WooCommerce module, ported from the 1.x
  * Integration tab.
  */
-final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface {
+final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterface, StatusInfoInterface, SiteHealthInfoInterface {
 
 	/**
 	 * Documentation hub of this module on gtm4wp.com.
@@ -28,14 +33,8 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	private const DOC_PAGE = 'google-tag-manager-for-woocommerce';
 
 	/**
-	 * The per-option reference every field of this module deep links into. It
-	 * already carries an `<a name="…">` anchor per option key, which is where
-	 * the convention the rest of the plugin now follows came from.
-	 *
-	 * Separate from the setup guides linked out of the descriptions below: a
-	 * guide answers "how do I build this in Google Tag Manager", the reference
-	 * answers "what does this one switch do", and the help icon asks the second
-	 * question.
+	 * The per-option reference every field deep links into (one `<a name>` anchor
+	 * per option key); distinct from the setup guides linked in the descriptions.
 	 */
 	private const DOC_REFERENCE = self::DOC_PAGE . '/woocommerce-settings-reference';
 
@@ -102,12 +101,9 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 		);
 		if ( function_exists( 'get_object_taxonomies' ) ) {
 			foreach ( get_object_taxonomies( 'product', 'objects' ) as $taxonomy_slug => $taxonomy_object ) {
-				// Only offer taxonomies a store owner would use as a brand: those
-				// with a public archive and an admin UI, matching the 1.x filter
-				// ( public + show_ui + non-builtin ). This drops WooCommerce's
-				// internal product_type / product_visibility taxonomies and
-				// cross-cutting ones other plugins attach to the product post
-				// type (e.g. WPML's non-public "translation_priority").
+				// Only taxonomies a store owner would use as a brand (public +
+				// show_ui + non-builtin, the 1.x filter): drops WooCommerce's internal
+				// product_type / product_visibility and WPML's translation_priority.
 				if ( ! $taxonomy_object->public || ! $taxonomy_object->show_ui || $taxonomy_object->_builtin ) {
 					continue;
 				}
@@ -116,11 +112,9 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 			}
 		}
 
-		// Order-status choices for the "statuses that trigger the purchase event"
-		// field. wc_get_order_statuses() keys are prefixed with "wc-" while
-		// WC_Order::get_status() returns the bare slug, so strip the prefix to
-		// keep the stored values comparable. Fall back to the core statuses when
-		// WooCommerce is not loaded (so the field is always usable in the admin).
+		// wc_get_order_statuses() keys carry the "wc-" prefix while
+		// WC_Order::get_status() returns the bare slug, so strip it. Core statuses
+		// as the fallback when WooCommerce is not loaded.
 		$order_status_choices = array();
 		if ( function_exists( 'wc_get_order_statuses' ) ) {
 			foreach ( wc_get_order_statuses() as $status_key => $status_label ) {
@@ -140,15 +134,21 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 			);
 		}
 
-		// Page choices for the custom order-received page selector.
+		// Page choices for the custom order-received page selector. Loaded only
+		// when read: get_pages() loads every page, and fields() also runs on
+		// requests that never show them.
 		$order_received_page_choices = array(
 			'' => __( '(use the standard WooCommerce order received page)', 'duracelltomi-google-tag-manager' ),
 		);
-		if ( function_exists( 'get_pages' ) ) {
-			foreach ( (array) get_pages() as $page ) {
-				$order_received_page_choices[ (string) $page->ID ] = $page->post_title;
+		$load_order_received_pages   = static function (): array {
+			$pages = array();
+			if ( function_exists( 'get_pages' ) ) {
+				foreach ( (array) get_pages() as $page ) {
+					$pages[ (string) $page->ID ] = $page->post_title;
+				}
 			}
-		}
+			return $pages;
+		};
 
 		// Business vertical labels are Google product terms and are intentionally not translated (1.x parity).
 		$business_verticals = array(
@@ -199,13 +199,10 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				description: esc_html__( 'Select which custom taxonomy is being used to add the brand of products', 'duracelltomi-google-tag-manager' ),
 				group: 'products',
 				choices: $taxonomy_choices,
-				// Replaces the SELECT default on purpose: the choice list is built
-				// from the taxonomies registered on THIS request, so the default's
-				// allow-list reset would silently blank a stored brand taxonomy
-				// whenever its plugin is momentarily inactive during a save/import.
-				// Field::to_string() keeps the cast warning-free on non-scalar
-				// import values (Field::sanitize() runs a custom sanitizer INSTEAD
-				// of the type-defensive default, never before it).
+				// Replaces the SELECT default on purpose: its allow-list reset would
+				// blank a stored brand taxonomy whenever its plugin is momentarily
+				// inactive during a save/import. Field::to_string() keeps the cast
+				// warning-free (a custom sanitizer replaces the type-defensive default).
 				sanitizer: static function ( $value ) {
 					return sanitize_text_field( Field::to_string( $value ) );
 				},
@@ -219,6 +216,17 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				description: esc_html__( 'Check this to include the full category path of each product in ecommerce tracking. WARNING! This can lead to performance issues on large sites with lots of traffic!', 'duracelltomi-google-tag-manager' ),
 				group: 'products',
 				doc: self::DOC_REFERENCE
+			),
+			new Field(
+				key: GTM4WP_OPTION_INTEGRATE_WCMASTERLANGUAGE,
+				type: Field::TYPE_CHECKBOX,
+				default_value: false,
+				label: __( 'Report products in the default language', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'On WPML or Polylang stores, reports GA4 ecommerce items in the store\'s default language, so a product sold in several languages is one item in your reports. Translated pages then send a different item_id: check feeds and remarketing that use it.', 'duracelltomi-google-tag-manager' ),
+				group: 'products',
+				phase: Field::PHASE_EXPERIMENTAL,
+				doc: self::DOC_REFERENCE,
+				unavailable: DefaultLanguage::unavailable_reason( false )
 			),
 			new Field(
 				key: GTM4WP_OPTION_INTEGRATE_WCBUSINESSVERTICAL,
@@ -280,7 +288,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Customer data in data layer', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Enable this to add all customer data (billing and shipping data, total number of orders and order value) into the data layer', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Adds customer* variables to the data layer: the logged-in customer\'s account name, billing and shipping data, hashed billing email, order count and total order value; guests get them empty. Adds the Enhanced Conversions user_data block (hashed email, phone, name; plain address) to the purchase event.', 'duracelltomi-google-tag-manager' ),
 				group: 'datalayer',
 				doc: self::DOC_REFERENCE
 			),
@@ -289,7 +297,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Order data in data layer', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Enable this to add all order attributes into the data layer on the order received page regardless and independently from ecommerce tracking', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Adds orderData, with the buyer\'s plain name, email, phone and address, up to the maximum order age: on the order received page even if tracked, on the next page of the non-cache-safe purchase fallback, and with the purchase on theme thank-you pages. Needs "Track e-commerce".', 'duracelltomi-google-tag-manager' ),
 				group: 'datalayer',
 				doc: self::DOC_REFERENCE
 			),
@@ -335,7 +343,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_CHECKBOX,
 				default_value: false,
 				label: __( 'Do not flag orders as being tracked', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'Turn this on to prevent the plugin from flagging orders as being already tracked. Leaving this unchecked ensures that no order data will be tracked multiple times in any ad or measurement system. Please only turn this feature on if you really need it!', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'Stops flagging orders as tracked, so a purchase can be reported more than once in your ad and measurement tools. With the cache-safe data layer on, "Reliable purchase tracking" then has no effect. Turn it on only if you really need it.', 'duracelltomi-google-tag-manager' ),
 				group: 'purchase',
 				doc: self::DOC_REFERENCE
 			),
@@ -344,7 +352,7 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				type: Field::TYPE_MULTISELECT,
 				default_value: array( 'processing', 'on-hold', 'completed' ),
 				label: __( 'Order statuses that trigger the purchase event', 'duracelltomi-google-tag-manager' ),
-				description: esc_html__( 'The purchase event is sent when an order first reaches one of these statuses, i.e. at order placement - not when payment physically clears. This is why Cash on Delivery (Processing) and bank transfer (On hold) orders are tracked at checkout even though the money arrives later. Leave Failed, Cancelled and Pending payment unchecked so unpaid orders are not counted as sales.', 'duracelltomi-google-tag-manager' ),
+				description: esc_html__( 'The purchase event is sent when an order first reaches one of these statuses, at placement, not when payment clears: Cash on Delivery (Processing) and bank transfer (On hold) count at checkout. Leave unpaid statuses unchecked. An empty list counts all but failed orders.', 'duracelltomi-google-tag-manager' ),
 				group: 'purchase',
 				phase: Field::PHASE_BETA,
 				choices: $order_status_choices,
@@ -369,7 +377,8 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 				group: 'purchase',
 				phase: Field::PHASE_BETA,
 				choices: $order_received_page_choices,
-				doc: self::DOC_REFERENCE
+				doc: self::DOC_REFERENCE,
+				choices_loader: $load_order_received_pages
 			),
 			new Field(
 				key: GTM4WP_OPTION_INTEGRATE_WCCLEARECOMMERCEDL,
@@ -425,5 +434,117 @@ final class AdminSchema implements AdminSchemaInterface, DocumentedSchemaInterfa
 	 */
 	public function unavailable_message(): string {
 		return __( 'WooCommerce 5.0 or newer needs to be installed and activated to use this module.', 'duracelltomi-google-tag-manager' );
+	}
+	/**
+	 * {@inheritDoc}
+	 *
+	 * The master switch is the e-commerce tracking option; the host is WooCommerce,
+	 * reported from its version constant. Present says nothing about the
+	 * version floor, which the module's is_available() enforces.
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, mixed>
+	 */
+	public function status_info( Options $options ): array {
+		return array(
+			'enabled'     => (bool) $options->get( GTM4WP_OPTION_INTEGRATE_WCTRACKECOMMERCE ),
+			'integration' => array(
+				'active'  => defined( 'WC_VERSION' ),
+				'version' => defined( 'WC_VERSION' ) ? (string) constant( 'WC_VERSION' ) : null,
+			),
+		);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * Text options are reported set/empty (a page id is configuration); the
+	 * cart/checkout page kind and HPOS are read from WooCommerce's utilities
+	 * behind class/method guards, "unknown" when they are not there (UC-2).
+	 *
+	 * @param Options $options The plugin options service.
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function site_health_info( Options $options ): array {
+		$info     = $this->status_info( $options );
+		$switches = array(
+			GTM4WP_OPTION_INTEGRATE_WCUSESKU,
+			GTM4WP_OPTION_INTEGRATE_WCUSEFULLCATEGORYPATH,
+			GTM4WP_OPTION_INTEGRATE_WCMASTERLANGUAGE,
+			GTM4WP_OPTION_INTEGRATE_WCVIEWITEMONPARENT,
+			GTM4WP_OPTION_INTEGRATE_WCLISTATTRIBUTION,
+			GTM4WP_OPTION_INTEGRATE_WCEINCLUDECARTINDL,
+			GTM4WP_OPTION_INTEGRATE_WCCUSTOMERDATA,
+			GTM4WP_OPTION_INTEGRATE_WCORDERDATA,
+			GTM4WP_OPTION_INTEGRATE_WCEXCLUDETAX,
+			GTM4WP_OPTION_INTEGRATE_WCEXCLUDESHIPPING,
+			GTM4WP_OPTION_INTEGRATE_WCNOORDERTRACKEDFLAG,
+			GTM4WP_OPTION_INTEGRATE_WCPURCHASEONANYPAGE,
+			GTM4WP_OPTION_INTEGRATE_WCCLEARECOMMERCEDL,
+			GTM4WP_OPTION_INTEGRATE_WC_CHECKOUTWC,
+		);
+
+		$cart     = self::page_kind( 'is_cart_block_default' );
+		$checkout = self::page_kind( 'is_checkout_block_default' );
+		$hpos     = self::hpos();
+
+		return array(
+			'plugin'                     => SiteHealthRows::plugin( 'WooCommerce', $info['integration'], WooCommerceModule::MIN_WC_VERSION ),
+			'tracking'                   => SiteHealthRows::on_off( __( 'E-commerce tracking', 'duracelltomi-google-tag-manager' ), $info['enabled'] ),
+			'options'                    => SiteHealthRows::group( __( 'Options', 'duracelltomi-google-tag-manager' ), SiteHealthRows::states( $options, $switches ) ),
+			'brand_taxonomy'             => SiteHealthRows::items( __( 'Brand taxonomy', 'duracelltomi-google-tag-manager' ), array( (string) $options->get( GTM4WP_OPTION_INTEGRATE_WCEECBRANDTAXONOMY ) ) ),
+			'business_vertical'          => SiteHealthRows::text( __( 'Google Ads business vertical', 'duracelltomi-google-tag-manager' ), (string) $options->get( GTM4WP_OPTION_INTEGRATE_WCBUSINESSVERTICAL ) ),
+			'products_per_impression'    => SiteHealthRows::count( __( 'Products per impression', 'duracelltomi-google-tag-manager' ), (int) $options->get( GTM4WP_OPTION_INTEGRATE_WCPRODPERIMPRESSION ) ),
+			'order_max_age'              => SiteHealthRows::count( __( 'Maximum order age (minutes)', 'duracelltomi-google-tag-manager' ), (int) $options->get( GTM4WP_OPTION_INTEGRATE_WCORDERMAXAGE ) ),
+			'datalayer_timeout'          => SiteHealthRows::count( __( 'Data layer timeout (ms)', 'duracelltomi-google-tag-manager' ), (int) $options->get( GTM4WP_OPTION_INTEGRATE_WCDLMAXTIMEOUT ) ),
+			'purchase_statuses'          => SiteHealthRows::items( __( 'Order statuses that trigger the purchase event', 'duracelltomi-google-tag-manager' ), (array) $options->get( GTM4WP_OPTION_INTEGRATE_WCPURCHASESTATUSES ) ),
+			'product_id_prefix'          => SiteHealthRows::set_or_empty( __( 'Product ID prefix', 'duracelltomi-google-tag-manager' ), (string) $options->get( GTM4WP_OPTION_INTEGRATE_WCREMPRODIDPREFIX ) ),
+			'transaction_id_prefix'      => SiteHealthRows::set_or_empty( __( 'Transaction ID prefix', 'duracelltomi-google-tag-manager' ), (string) $options->get( GTM4WP_OPTION_INTEGRATE_WCTRANSACTIONIDPREFIX ) ),
+			'custom_order_received_page' => SiteHealthRows::set_or_empty( __( 'Custom order received page', 'duracelltomi-google-tag-manager' ), (string) $options->get( GTM4WP_OPTION_INTEGRATE_WCCUSTOMORDERRECEIVEDPAGE ) ),
+			'cart_checkout_pages'        => SiteHealthRows::assoc(
+				__( 'Cart and checkout pages', 'duracelltomi-google-tag-manager' ),
+				array(
+					'cart'     => SiteHealthRows::word( $cart ),
+					'checkout' => SiteHealthRows::word( $checkout ),
+				),
+				array(
+					'cart'     => $cart,
+					'checkout' => $checkout,
+				)
+			),
+			'hpos'                       => SiteHealthRows::text( __( 'High-performance order storage', 'duracelltomi-google-tag-manager' ), SiteHealthRows::word( $hpos ), $hpos ),
+		);
+	}
+
+	/**
+	 * Whether the store's cart or checkout page is the block or the classic
+	 * one, as WooCommerce's own utility answers it.
+	 *
+	 * @param string $method The CartCheckoutUtils predicate.
+	 * @return string block, classic or unknown.
+	 */
+	private static function page_kind( string $method ): string {
+		$utils = 'Automattic\WooCommerce\Blocks\Utils\CartCheckoutUtils';
+
+		if ( ! class_exists( $utils ) || ! method_exists( $utils, $method ) ) {
+			return 'unknown';
+		}
+
+		return call_user_func( array( $utils, $method ) ) ? 'block' : 'classic';
+	}
+
+	/**
+	 * Whether orders live in the custom tables (HPOS).
+	 *
+	 * @return string on, off or unknown.
+	 */
+	private static function hpos(): string {
+		$utils = 'Automattic\WooCommerce\Utilities\OrderUtil';
+
+		if ( ! class_exists( $utils ) || ! method_exists( $utils, 'custom_orders_table_usage_is_enabled' ) ) {
+			return 'unknown';
+		}
+
+		return call_user_func( array( $utils, 'custom_orders_table_usage_is_enabled' ) ) ? 'on' : 'off';
 	}
 }
